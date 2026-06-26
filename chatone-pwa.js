@@ -19,7 +19,7 @@ const CONFIG = {
   // ★ Firebase Cloud Functions プロキシ URL（デプロイ後に設定）
   // Firebase コンソール > Functions で確認できる URL の「ベース部分」
   // 例: 'https://asia-northeast1-my-project-id.cloudfunctions.net'
-  PROXY_BASE_URL: 'https://asia-northeast1-REPLACE_PROJECT_ID.cloudfunctions.net',
+  PROXY_BASE_URL: 'https://asia-northeast1-chatone-fujibussan.cloudfunctions.net',
 
   FIREBASE: {
     apiKey:            'AIzaSyBlTJjF_fOYLpEQTsxt_X18s-A_4FGV-9U',
