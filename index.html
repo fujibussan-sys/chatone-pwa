@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#06b35a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Chatone" />
+  <meta name="description" content="Chatone — kintone チャットアプリ" />
+
+  <title>Chatone</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="chatone-pwa.css" />
+</head>
+<body>
+
+  <!-- スプラッシュ（起動中に表示） -->
+  <div id="splash" class="co-splash">
+    <div class="co-splash-inner">
+      <div class="co-splash-icon">💬</div>
+      <div class="co-splash-title">Chatone</div>
+      <div class="co-splash-status" id="splash-status">起動中…</div>
+    </div>
+  </div>
+
+  <!-- アプリ本体ルート（JS が書き換える） -->
+  <div id="app-root"></div>
+
+  <!-- Firebase SDK (compat 版) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"></script>
+
+  <!-- Chatone PWA メインスクリプト -->
+  <script src="chatone-pwa.js"></script>
+</body>
+</html>
