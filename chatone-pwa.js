@@ -486,8 +486,8 @@ const showLoginScreen = () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            subdomain, path: '/v1/user.json', method: 'GET',
-            auth, params: {},
+            subdomain, path: '/k/v1/app.json', method: 'GET',
+            auth, params: { id: String(CONFIG.APP_ID_STAMPS) },
           }),
         });
       } catch (networkErr) {
@@ -1750,8 +1750,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        subdomain:creds.subdomain, path:'/v1/user.json',
-        method:'GET', auth, params:{},
+        subdomain:creds.subdomain, path:'/k/v1/app.json',
+        method:'GET', auth, params:{id:String(CONFIG.APP_ID_STAMPS)},
       }),
       signal:ctrl.signal,
     });
