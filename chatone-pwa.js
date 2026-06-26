@@ -16,6 +16,11 @@
 const CONFIG = {
   KINTONE_SUBDOMAIN: 'fujibussan', // xxx.cybozu.com の xxx 部分
 
+  // ★ Firebase Cloud Functions プロキシ URL（デプロイ後に設定）
+  // Firebase コンソール > Functions で確認できる URL の「ベース部分」
+  // 例: 'https://asia-northeast1-my-project-id.cloudfunctions.net'
+  PROXY_BASE_URL: 'https://asia-northeast1-REPLACE_PROJECT_ID.cloudfunctions.net',
+
   FIREBASE: {
     apiKey:            'AIzaSyBlTJjF_fOYLpEQTsxt_X18s-A_4FGV-9U',
     authDomain:        'chatone-fujibussan.firebaseapp.com',
@@ -103,6 +108,8 @@ const authStore = {
     return c ? { 'X-Cybozu-Authorization': btoa(`${c.loginName}:${c.password}`) } : {};
   },
   base()      { return `https://${(this._cache?.subdomain || CONFIG.KINTONE_SUBDOMAIN)}.cybozu.com`; },
+  proxyUrl()  { return CONFIG.PROXY_BASE_URL; },
+  subdomain() { return this._cache?.subdomain || CONFIG.KINTONE_SUBDOMAIN; },
 };
 
 /* ============================================================
@@ -111,29 +118,37 @@ const authStore = {
 const api = {
   _userCache: null, _userCacheTs: 0,
 
+  // ── プロキシ共通リクエスト ──────────────────────────────────────────
+  // Firebase Cloud Functions の kintoneProxy を経由して cybozu.com に中継する。
+  // これにより GitHub Pages からの CORS ブロックを回避する。
+  async _proxy(path, method = 'GET', params = {}, body = null) {
+    const auth = authStore.header()['X-Cybozu-Authorization'];
+    const subdomain = authStore.subdomain();
+    const proxyUrl = `${authStore.proxyUrl()}/kintoneProxy`;
+    const r = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subdomain, path, method, auth, params, body }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      throw new Error(e.message || e.error || `kintone ${r.status}`);
+    }
+    return r.json();
+  },
+
   _h() { return { ...authStore.header(), 'Content-Type': 'application/json' }; },
 
   async _get(path, params = {}) {
-    const url = new URL(authStore.base() + path);
-    Object.entries(params).forEach(([k, v]) => {
-      if (Array.isArray(v)) v.forEach(i => url.searchParams.append(k, i));
-      else if (v != null) url.searchParams.set(k, v);
-    });
-    const r = await fetch(url.toString(), { headers: this._h() });
-    if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.message || `kintone ${r.status}`); }
-    return r.json();
+    return this._proxy(path, 'GET', params);
   },
 
   async _post(path, body) {
-    const r = await fetch(authStore.base() + path, { method:'POST', headers:this._h(), body:JSON.stringify(body) });
-    if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.message || `kintone ${r.status}`); }
-    return r.json();
+    return this._proxy(path, 'POST', {}, body);
   },
 
   async _put(path, body) {
-    const r = await fetch(authStore.base() + path, { method:'PUT', headers:this._h(), body:JSON.stringify(body) });
-    if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.message || `kintone ${r.status}`); }
-    return r.json();
+    return this._proxy(path, 'PUT', {}, body);
   },
 
   getLoginUser() { return authStore.get(); },
@@ -143,15 +158,34 @@ const api = {
   updateRecord(appId, id, record) { return this._put('/k/v1/record.json', { app:appId, id, record }); },
 
   async uploadFile(file) {
+    // ファイルアップロードは multipart/form-data のため専用エンドポイントを使用
     const fd = new FormData();
     fd.append('file', file, file.name);
-    const r = await fetch(authStore.base() + '/k/v1/file.json', { method:'POST', headers:authStore.header(), body:fd });
+    const r = await fetch(`${authStore.proxyUrl()}/kintoneFileProxy`, {
+      method: 'POST',
+      headers: {
+        'X-Cybozu-Authorization': authStore.header()['X-Cybozu-Authorization'],
+        'X-Kintone-Subdomain': authStore.subdomain(),
+      },
+      body: fd,
+    });
     if (!r.ok) throw new Error(`kintone file upload ${r.status}`);
     return (await r.json()).fileKey;
   },
 
   async fetchFile(fileKey) {
-    const r = await fetch(`${authStore.base()}/k/v1/file.json?fileKey=${encodeURIComponent(fileKey)}`, { headers:authStore.header() });
+    // ファイルダウンロードもプロキシ経由（バイナリはbase64で受け取る）
+    const r = await fetch(`${authStore.proxyUrl()}/kintoneProxy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subdomain: authStore.subdomain(),
+        path: '/k/v1/file.json',
+        method: 'GET',
+        auth: authStore.header()['X-Cybozu-Authorization'],
+        params: { fileKey },
+      }),
+    });
     if (!r.ok) throw new Error(`kintone file fetch ${r.status}`);
     return r.blob();
   },
@@ -291,8 +325,10 @@ const registerSW = async () => {
   if (!('serviceWorker' in navigator)) return;
   try {
     // FCM バックグラウンド SW と アプリ SW を両方登録
-    _swReg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope:'/' });
-    await navigator.serviceWorker.register('/sw.js');
+    // GitHub Pages サブディレクトリ対応: ルート絶対パスではなく baseURI 相対パスを使用
+    const swBase = new URL('./', document.baseURI).pathname;
+    _swReg = await navigator.serviceWorker.register(swBase + 'firebase-messaging-sw.js', { scope: swBase });
+    await navigator.serviceWorker.register(swBase + 'sw.js', { scope: swBase });
     // SW からの open-room メッセージを受信
     navigator.serviceWorker.addEventListener('message', e => {
       if (e.data?.type === 'open-room' && e.data.roomId) {
@@ -399,22 +435,26 @@ const showLoginScreen = () => {
         </div>
         <p class="co-login-desc">kintoneのログイン情報でサインイン</p>
 
-        <label class="co-login-label">kintoneドメイン</label>
-        <div class="co-login-domain-row">
-          <input id="l-domain" class="co-login-input" type="text" value="${CONFIG.KINTONE_SUBDOMAIN}"
-            autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="your-domain" />
-          <span class="co-login-domain-suffix">.cybozu.com</span>
-        </div>
+        <form id="l-form" onsubmit="return false;" autocomplete="on">
+          <label class="co-login-label">kintoneドメイン</label>
+          <div class="co-login-domain-row">
+            <input id="l-domain" class="co-login-input" type="text" value="${CONFIG.KINTONE_SUBDOMAIN}"
+              autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="your-domain"
+              autocomplete="username" />
+            <span class="co-login-domain-suffix">.cybozu.com</span>
+          </div>
 
-        <label class="co-login-label">ログイン名</label>
-        <input id="l-name" class="co-login-input" type="text" autocorrect="off" autocapitalize="off"
-          spellcheck="false" placeholder="例: tsumura" />
+          <label class="co-login-label">ログイン名</label>
+          <input id="l-name" class="co-login-input" type="text" autocorrect="off" autocapitalize="off"
+            spellcheck="false" placeholder="例: tsumura" autocomplete="username" />
 
-        <label class="co-login-label">パスワード</label>
-        <input id="l-pass" class="co-login-input" type="password" placeholder="••••••••" />
+          <label class="co-login-label">パスワード</label>
+          <input id="l-pass" class="co-login-input" type="password" placeholder="••••••••"
+            autocomplete="current-password" />
 
-        <button class="co-login-btn" id="l-btn">ログイン</button>
-        <div class="co-login-error hidden" id="l-err"></div>
+          <button class="co-login-btn" id="l-btn" type="button">ログイン</button>
+          <div class="co-login-error hidden" id="l-err"></div>
+        </form>
 
         <p class="co-login-note">
           ログイン情報はこの端末のブラウザ内にのみ保存され、<br>
@@ -436,17 +476,36 @@ const showLoginScreen = () => {
     }
     btn.disabled=true; btn.textContent='確認中…';
     try {
-      const r = await fetch(`https://${subdomain}.cybozu.com/k/v1/apps.json?limit=1`, {
-        headers:{ 'X-Cybozu-Authorization': btoa(`${loginName}:${password}`) },
-      });
+      // Firebase Functions プロキシ経由で kintone へ接続確認
+      const auth = btoa(`${loginName}:${password}`);
+      const proxyUrl = CONFIG.PROXY_BASE_URL + '/kintoneProxy';
+
+      let r;
+      try {
+        r = await fetch(proxyUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subdomain, path: '/k/v1/apps.json', method: 'GET',
+            auth, params: { limit: '1' },
+          }),
+        });
+      } catch (networkErr) {
+        throw new Error('プロキシサーバーへの接続に失敗しました。PROXY_BASE_URL の設定を確認してください。');
+      }
       if (r.status===401||r.status===403) throw new Error('ログイン名またはパスワードが正しくありません');
       if (!r.ok) throw new Error(`kintoneに接続できませんでした (${r.status})`);
 
-      // ユーザー情報取得
+      // ユーザー情報取得（プロキシ経由）
       let code=loginName, name=loginName;
       try {
-        const ur = await fetch(`https://${subdomain}.cybozu.com/v1/users.json?codes[]=${encodeURIComponent(loginName)}&size=1`, {
-          headers:{ 'X-Cybozu-Authorization': btoa(`${loginName}:${password}`) },
+        const ur = await fetch(proxyUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subdomain, path: '/v1/users.json', method: 'GET',
+            auth, params: { 'codes[]': loginName, size: '1' },
+          }),
         });
         if (ur.ok) { const ud=await ur.json(); if(ud.users?.[0]){ code=ud.users[0].code||loginName; name=ud.users[0].name||loginName; } }
       } catch {}
@@ -1681,13 +1740,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   const creds = await authStore.load();
   if (!creds) { showLoginScreen(); return; }
 
-  // 接続確認（5秒タイムアウト、失敗時はオフラインとして続行）
+  // 接続確認（プロキシ経由、5秒タイムアウト、失敗時はオフラインとして続行）
   setSplashStatus('接続確認中…');
   try {
     const ctrl=new AbortController();
     const timer=setTimeout(()=>ctrl.abort(),5000);
-    const r=await fetch(`https://${creds.subdomain}.cybozu.com/k/v1/apps.json?limit=1`,{
-      headers:{'X-Cybozu-Authorization':btoa(`${creds.loginName}:${creds.password}`)},
+    const auth=btoa(`${creds.loginName}:${creds.password}`);
+    const r=await fetch(CONFIG.PROXY_BASE_URL + '/kintoneProxy',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        subdomain:creds.subdomain, path:'/k/v1/apps.json',
+        method:'GET', auth, params:{limit:'1'},
+      }),
       signal:ctrl.signal,
     });
     clearTimeout(timer);
