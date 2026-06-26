@@ -161,7 +161,7 @@ const api = {
     // ファイルアップロードは multipart/form-data のため専用エンドポイントを使用
     const fd = new FormData();
     fd.append('file', file, file.name);
-    const r = await fetch(`${authStore.proxyUrl()}/kintoneFileProxy`, {
+    const r = await fetch(`${authStore.proxyUrl()}/kintoneFileUpload`, {
       method: 'POST',
       headers: {
         'X-Cybozu-Authorization': authStore.header()['X-Cybozu-Authorization'],
@@ -174,19 +174,16 @@ const api = {
   },
 
   async fetchFile(fileKey) {
-    // ファイルダウンロードもプロキシ経由（バイナリはbase64で受け取る）
-    const r = await fetch(`${authStore.proxyUrl()}/kintoneProxy`, {
+    const r = await fetch(`${authStore.proxyUrl()}/kintoneFileDownload`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         subdomain: authStore.subdomain(),
-        path: '/k/v1/file.json',
-        method: 'GET',
         auth: authStore.header()['X-Cybozu-Authorization'],
-        params: { fileKey },
+        fileKey,
       }),
     });
-    if (!r.ok) throw new Error(`kintone file fetch ${r.status}`);
+    if (!r.ok) throw new Error(`kintone file download ${r.status}`);
     return r.blob();
   },
 
@@ -477,37 +474,48 @@ const showLoginScreen = () => {
     btn.disabled=true; btn.textContent='確認中…';
     try {
       // Firebase Functions プロキシ経由で kintone へ接続確認
+      // /k/v1/records.json にlimit=1でアクセス（一般ユーザーが確実に使えるAPI）
       const auth = btoa(`${loginName}:${password}`);
       const proxyUrl = CONFIG.PROXY_BASE_URL + '/kintoneProxy';
 
-      let r;
+      let verifyRes;
       try {
-        r = await fetch(proxyUrl, {
+        verifyRes = await fetch(proxyUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            subdomain, path: '/k/v1/app.json', method: 'GET',
-            auth, params: { id: String(CONFIG.APP_ID_STAMPS) },
+            subdomain,
+            path: '/k/v1/records.json',
+            method: 'GET',
+            auth,
+            params: { app: String(CONFIG.APP_ID_STAMPS), query: 'limit 1' },
           }),
         });
       } catch (networkErr) {
         throw new Error('プロキシサーバーへの接続に失敗しました。PROXY_BASE_URL の設定を確認してください。');
       }
-      if (r.status===401||r.status===403) throw new Error('ログイン名またはパスワードが正しくありません');
-      if (!r.ok) throw new Error(`kintoneに接続できませんでした (${r.status})`);
+      if (verifyRes.status === 401 || verifyRes.status === 403) {
+        throw new Error('ログイン名またはパスワードが正しくありません');
+      }
+      if (!verifyRes.ok) {
+        const errBody = await verifyRes.json().catch(() => ({}));
+        throw new Error(errBody.message || `kintoneに接続できませんでした (${verifyRes.status})`);
+      }
 
-      // ユーザー情報取得（プロキシ経由）
-      let code=loginName, name=loginName;
+      // ユーザー情報はFirebase /user_directoryから取得（kintone ユーザーAPIは権限不要で使えないため）
+      let code = loginName, name = loginName;
       try {
-        const ur = await fetch(proxyUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            subdomain, path: '/v1/users.json', method: 'GET',
-            auth, params: { 'codes[]': loginName, size: '1' },
-          }),
-        });
-        if (ur.ok) { const ud=await ur.json(); if(ud.users?.[0]){ code=ud.users[0].code||loginName; name=ud.users[0].name||loginName; } }
+        // Firebase DBのuser_directoryからユーザー名を探す
+        if (_db) {
+          const encKey = loginName.replace(/_/g,'_us_').replace(/@/g,'_at_').replace(/\./g,'_dot_')
+            .replace(/#/g,'_hash_').replace(/\$/g,'_dollar_').replace(/\//g,'_slash_');
+          const snap = await _db.ref(`/user_directory/${encKey}`).get();
+          if (snap.exists()) {
+            const u = snap.val();
+            code = u.code || loginName;
+            name = u.name || loginName;
+          }
+        }
       } catch {}
 
       await authStore.save({ subdomain, loginName, password, code, name });
@@ -1750,8 +1758,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        subdomain:creds.subdomain, path:'/k/v1/app.json',
-        method:'GET', auth, params:{id:String(CONFIG.APP_ID_STAMPS)},
+        subdomain:creds.subdomain, path:'/k/v1/records.json',
+        method:'GET', auth, params:{app:String(CONFIG.APP_ID_STAMPS), query:'limit 1'},
       }),
       signal:ctrl.signal,
     });
