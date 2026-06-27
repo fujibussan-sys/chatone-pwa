@@ -153,7 +153,7 @@ const api = {
 
   getLoginUser() { return authStore.get(); },
 
-  getRecords(appId, query='') { return this._get('/k/v1/records.json', { app:appId, ...(query?{query}:{}) }); },
+  getRecords(appId, query='', size=null) { const p={app:appId}; if(query) p.query=query; if(size) p.size=String(size); return this._get('/k/v1/records.json', p); },
   addRecord(appId, record)    { return this._post('/k/v1/record.json', { app:appId, record }); },
   updateRecord(appId, id, record) { return this._put('/k/v1/record.json', { app:appId, id, record }); },
 
@@ -200,7 +200,7 @@ const api = {
         try {
           let all = []; let offset = 0;
           while (true) {
-            const d = await this._get('/v1/users.json', { offset, size:100 });
+            const d = await this._get('/v1/users.json', { offset, size:100, enabled:true });
             all = all.concat(d.users||[]);
             if ((d.users||[]).length < 100) break;
             offset += 100;
@@ -504,18 +504,30 @@ const showLoginScreen = () => {
       }
       // 200/400/403 はすべて「認証は通った」とみなしてログイン成功
 
-      // ユーザー情報はFirebase /user_directoryから取得（kintone ユーザーAPIは権限不要で使えないため）
+      // ユーザー情報をFirebase /user_directoryから取得
       let code = loginName, name = loginName;
       try {
-        // Firebase DBのuser_directoryからユーザー名を探す
         if (_db) {
-          const encKey = loginName.replace(/_/g,'_us_').replace(/@/g,'_at_').replace(/\./g,'_dot_')
-            .replace(/#/g,'_hash_').replace(/\$/g,'_dollar_').replace(/\//g,'_slash_');
+          // 1) loginNameをエンコードして直接引く（codeがloginNameと同一の場合）
+          const encKey = encodeUserCode(loginName);
           const snap = await _db.ref(`/user_directory/${encKey}`).get();
           if (snap.exists()) {
             const u = snap.val();
             code = u.code || loginName;
             name = u.name || loginName;
+          } else {
+            // 2) 見つからない場合は全件スキャンしてloginNameに一致するエントリを探す
+            const allSnap = await _db.ref('/user_directory').get();
+            if (allSnap.exists()) {
+              const users = Object.values(allSnap.val() || {});
+              // code または loginName フィールドで一致するものを探す
+              const found = users.find(u =>
+                u.code === loginName ||
+                u.loginName === loginName ||
+                (u.code && u.code.toLowerCase() === loginName.toLowerCase())
+              );
+              if (found) { code = found.code || loginName; name = found.name || loginName; }
+            }
           }
         }
       } catch {}
@@ -1437,7 +1449,7 @@ const loadStamps = async () => {
       });
       return;
     }
-    const res=await api.getRecords(CONFIG.APP_ID_STAMPS,'limit 200');
+    const res=await api.getRecords(CONFIG.APP_ID_STAMPS,'',200);
     _stampCache=res.records||[];
     await Promise.all(_stampCache.map(async s=>{
       const f=s.stamp_file?.value?.[0]||s.stamp_image?.value?.[0]; if(!f?.fileKey) return;
@@ -1470,7 +1482,7 @@ const _stampOut = e => { const p=document.getElementById('co-stamp-picker'); if(
 const loadAllAvatars = async () => {
   if (!CONFIG.APP_ID_AVATARS) return;
   try {
-    const res=await api.getRecords(CONFIG.APP_ID_AVATARS,'limit 500');
+    const res=await api.getRecords(CONFIG.APP_ID_AVATARS,'',500);
     Object.values(state.avatarCache).forEach(v=>{ if(v?.url?.startsWith('blob:')) URL.revokeObjectURL(v.url); });
     state.avatarCache={};
     await Promise.all(res.records.map(async rec=>{
@@ -1643,7 +1655,7 @@ const formatFileSize = bytes => {
 const encodeUserCode = c => { if(!c) return c; return String(c).replace(/_/g,'_us_').replace(/@/g,'_at_').replace(/\./g,'_dot_').replace(/#/g,'_hash_').replace(/\$/g,'_dollar_').replace(/\//g,'_slash_').replace(/\[/g,'_lb_').replace(/\]/g,'_rb_'); };
 const decodeUserCode = c => { if(!c) return c; return String(c).replace(/_rb_/g,']').replace(/_lb_/g,'[').replace(/_slash_/g,'/').replace(/_dollar_/g,'$').replace(/_hash_/g,'#').replace(/_dot_/g,'.').replace(/_at_/g,'@').replace(/_us_/g,'_'); };
 const userKey        = c => encodeUserCode(c);
-const hasMember      = (m,c) => !!m&&!!m[userKey(c)];
+const hasMember      = (m,c) => !!m&&(!!m[userKey(c)]||!!m[c]);
 const getMemberCodes = m => Object.keys(m||{}).map(decodeUserCode);
 const unreadCount    = (r,c) => (r?.unread||{})[userKey(c)]||0;
 const isReadBy       = (m,c) => !!m?.read_by?.[userKey(c)];
