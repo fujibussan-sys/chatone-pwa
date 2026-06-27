@@ -473,8 +473,8 @@ const showLoginScreen = () => {
     }
     btn.disabled=true; btn.textContent='確認中…';
     try {
-      // Firebase Functions プロキシ経由で kintone へ接続確認
-      // /k/v1/records.json にlimit=1でアクセス（一般ユーザーが確実に使えるAPI）
+      // Firebase Functions プロキシ経由で kintone 認証確認
+      // 401/520=認証失敗、200/400/403等=認証成功（権限エラーも認証は通っている）
       const auth = btoa(`${loginName}:${password}`);
       const proxyUrl = CONFIG.PROXY_BASE_URL + '/kintoneProxy';
 
@@ -485,22 +485,24 @@ const showLoginScreen = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             subdomain,
-            path: '/k/v1/records.json',
+            path: '/k/v1/apps.json',
             method: 'GET',
             auth,
-            params: { app: String(CONFIG.APP_ID_STAMPS), size: '1' },
+            params: { limit: '1' },
           }),
         });
       } catch (networkErr) {
         throw new Error('プロキシサーバーへの接続に失敗しました。PROXY_BASE_URL の設定を確認してください。');
       }
-      if (verifyRes.status === 401 || verifyRes.status === 403) {
+      // 401/520 = 認証失敗（パスワード間違い）
+      if (verifyRes.status === 401 || verifyRes.status === 520) {
         throw new Error('ログイン名またはパスワードが正しくありません');
       }
-      if (!verifyRes.ok) {
-        const errBody = await verifyRes.json().catch(() => ({}));
-        throw new Error(errBody.message || `kintoneに接続できませんでした (${verifyRes.status})`);
+      // 5xx（520除く）= プロキシ/サーバーエラー
+      if (verifyRes.status >= 502) {
+        throw new Error(`プロキシサーバーエラー (${verifyRes.status})`);
       }
+      // 200/400/403 はすべて「認証は通った」とみなしてログイン成功
 
       // ユーザー情報はFirebase /user_directoryから取得（kintone ユーザーAPIは権限不要で使えないため）
       let code = loginName, name = loginName;
