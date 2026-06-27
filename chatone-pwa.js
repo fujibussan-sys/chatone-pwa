@@ -488,7 +488,7 @@ const showLoginScreen = () => {
             path: '/k/v1/records.json',
             method: 'GET',
             auth,
-            params: { app: String(CONFIG.APP_ID_STAMPS), query: 'limit 1' },
+            params: { app: String(CONFIG.APP_ID_STAMPS), size: '1' },
           }),
         });
       } catch (networkErr) {
@@ -1759,7 +1759,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         subdomain:creds.subdomain, path:'/k/v1/records.json',
-        method:'GET', auth, params:{app:String(CONFIG.APP_ID_STAMPS), query:'limit 1'},
+        method:'GET', auth, params:{app:String(CONFIG.APP_ID_STAMPS), size:'1'},
       }),
       signal:ctrl.signal,
     });
