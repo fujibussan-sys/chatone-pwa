@@ -194,6 +194,7 @@ const api = {
     });
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
+      console.warn('[kintoneProxy] request failed:', { status: r.status, path, params, body: e });
       throw new Error(e.message || e.error || `kintone ${r.status}`);
     }
     return r.json();
@@ -216,6 +217,7 @@ const api = {
   getLoginUser() { return authStore.get(); },
 
   getRecords(appId, query='', limit=100) { const q = [query, `limit ${limit}`].filter(Boolean).join(' '); return this._get('/k/v1/records.json', { app:appId, query:q }); },
+  getRecord(appId, id) { return this._get('/k/v1/record.json', { app:appId, id }); },
   addRecord(appId, record)    { return this._post('/k/v1/record.json', { app:appId, record }); },
   updateRecord(appId, id, record) { return this._put('/k/v1/record.json', { app:appId, id, record }); },
 
@@ -299,13 +301,19 @@ const kintoneAttachment = {
     const fileKey = await api.uploadFile(file);
     const rec = {}; rec[CONFIG.ATTACHMENT_FIELD_CODE] = { value:[{ fileKey }] };
     const res = await api.addRecord(CONFIG.APP_ID_ATTACHMENTS, rec);
-    return { name:file.name, size:file.size, type:file.type, kintone_record_id:res.id };
+    return { name:file.name, size:file.size, type:file.type, fileKey, kintone_record_id:res.id };
   },
-  async fetchBlobUrl(recordId) {
-    const res = await api.getRecords(CONFIG.APP_ID_ATTACHMENTS, `$id = "${recordId}"`);
+  async fetchBlobUrl(recordId, fileKey = '') {
+    if (fileKey) {
+      const blob = await api.fetchFile(fileKey);
+      return URL.createObjectURL(blob);
+    }
+    const res = await api.getRecord(CONFIG.APP_ID_ATTACHMENTS, recordId);
+    const rec = res.record || {};
     const f = res.records?.[0]?.[CONFIG.ATTACHMENT_FIELD_CODE]?.value?.[0];
-    if (!f?.fileKey) throw new Error('添付ファイルが見つかりません');
-    const blob = await api.fetchFile(f.fileKey);
+    const file = f || rec[CONFIG.ATTACHMENT_FIELD_CODE]?.value?.[0];
+    if (!file?.fileKey) throw new Error('添付ファイルが見つかりません');
+    const blob = await api.fetchFile(file.fileKey);
     return URL.createObjectURL(blob);
   },
 };
@@ -384,7 +392,7 @@ const fb = {
 
 const usersFromRoomMembers = async () => {
   try {
-    if (!_fbFn) await initFirebase();
+    if (!_fbFn?.ref) await initFirebase();
     const safeDecode = c => {
       if (!c) return c;
       return String(c)
@@ -900,7 +908,7 @@ const buildUI = () => {
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><circle cx="9" cy="10" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.2" fill="currentColor" stroke="none"/><path d="M8.5 14.5 Q12 17.5 15.5 14.5" fill="none"/></svg>
           </button>` : ''}
           <div class="input-wrap">
-            <div class="msg-input" id="msg-input" contenteditable="true" data-placeholder="メッセージを入力…"></div>
+            <div class="msg-input" id="msg-input" contenteditable="true" enterkeyhint="enter" data-placeholder="メッセージを入力…"></div>
             <div class="attach-preview" id="attach-preview"></div>
           </div>
           <button class="btn-send" id="btn-send">
@@ -1084,7 +1092,7 @@ const renderMessages = (messages) => {
     let attachHTML = '';
     if (att?.kintone_record_id) {
       const isImg = /^image\//i.test(att.type||'')||/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(att.name||'');
-      attachHTML = `<div class="msg-attach-chip" data-att-record-id="${escapeHTML(String(att.kintone_record_id))}" data-att-name="${escapeHTML(att.name||'file')}" data-att-image="${isImg?'1':'0'}">
+      attachHTML = `<div class="msg-attach-chip" data-att-record-id="${escapeHTML(String(att.kintone_record_id))}" data-att-file-key="${escapeHTML(att.fileKey||'')}" data-att-name="${escapeHTML(att.name||'file')}" data-att-image="${isImg?'1':'0'}">
         <span class="msg-attach-icon">${isImg?'🖼️':'📎'}</span>
         <span class="msg-attach-info"><span class="msg-attach-name">${escapeHTML(att.name||'file')}</span>
         <span class="msg-attach-sub">${escapeHTML(formatFileSize(att.size))}${att.size?' ・ ':''}クリックして${isImg?'表示':'ダウンロード'}</span></span></div>`;
@@ -1165,7 +1173,7 @@ const handleAttachmentChipClick = async (chip) => {
   const orig = sub?.textContent||'';
   chip.dataset.loading='1'; if(sub) sub.textContent='取得中…';
   try {
-    const u = await kintoneAttachment.fetchBlobUrl(chip.dataset.attRecordId);
+    const u = await kintoneAttachment.fetchBlobUrl(chip.dataset.attRecordId, chip.dataset.attFileKey || '');
     chip.dataset.objectUrl = u; openOrDownload(u, name, isImage);
     if(sub) sub.textContent = isImage?'クリックして表示':'クリックしてダウンロード';
   } catch(e) { showToast('ファイルの取得に失敗しました','error'); if(sub) sub.textContent=orig; }
@@ -1854,18 +1862,20 @@ const formatTime = ms => {
 };
 const formatDateTime = ms => { if(!ms) return ''; const d=new Date(ms); return d.toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); };
 
+const showRoomListMobile = () => {
+  document.getElementById('chatone-sidebar')?.classList.remove('hidden-mobile');
+  document.getElementById('chat-area')?.classList.add('hidden');
+  document.getElementById('chat-empty')?.classList.remove('hidden');
+};
+
 /* ============================================================
  *  イベントバインド
  * ============================================================ */
 const bindEvents = () => {
-  document.getElementById('btn-back')?.addEventListener('click', () => {
-    document.getElementById('chatone-sidebar')?.classList.remove('hidden-mobile');
-    document.getElementById('chat-area')?.classList.add('hidden');
-    document.getElementById('chat-empty')?.classList.remove('hidden');
-  });
+  document.getElementById('btn-back')?.addEventListener('click', showRoomListMobile);
   document.getElementById('btn-send')?.addEventListener('click', sendMessage);
   document.getElementById('msg-input')?.addEventListener('keydown', e => {
-    if (e.key==='Enter'&&!e.shiftKey&&!state.isComposing) { e.preventDefault(); sendMessage(); }
+    if (e.key==='Enter'&&!e.shiftKey&&!state.isComposing&&!state.isMobile) { e.preventDefault(); sendMessage(); }
   });
   document.getElementById('msg-input')?.addEventListener('compositionstart', ()=>{ state.isComposing=true; });
   document.getElementById('msg-input')?.addEventListener('compositionend',   ()=>{ state.isComposing=false; });
@@ -1873,6 +1883,27 @@ const bindEvents = () => {
   if (CONFIG.APP_ID_STAMPS) document.getElementById('btn-stamp')?.addEventListener('click',e=>{ e.stopPropagation(); toggleStampPicker(); });
   document.getElementById('btn-bg-color')?.addEventListener('click',e=>{ e.stopPropagation(); toggleBgColorPicker(); });
   document.getElementById('btn-members')?.addEventListener('click',()=>openMembersPanel());
+
+  const chatArea = document.getElementById('chat-area');
+  if (chatArea) {
+    let swipeStart = null;
+    chatArea.addEventListener('touchstart', e => {
+      const t = e.touches?.[0];
+      if (!state.isMobile || !t || t.clientX > 28) { swipeStart = null; return; }
+      swipeStart = { x:t.clientX, y:t.clientY, at:Date.now() };
+    }, { passive:true });
+    chatArea.addEventListener('touchmove', e => {
+      if (!swipeStart || !state.isMobile) return;
+      const t = e.touches?.[0]; if (!t) return;
+      const dx = t.clientX - swipeStart.x;
+      const dy = Math.abs(t.clientY - swipeStart.y);
+      if (dx > 72 && dy < 52 && Date.now() - swipeStart.at < 700) {
+        swipeStart = null;
+        showRoomListMobile();
+      }
+    }, { passive:true });
+    chatArea.addEventListener('touchend', () => { swipeStart = null; }, { passive:true });
+  }
 
   // 新規ルーム
   let _usTimer=null, _usBound=false;
