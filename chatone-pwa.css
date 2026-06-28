@@ -2356,6 +2356,23 @@ html, body {
   .chatone-main { width: 100%; }
 }
 
+/* ---- iOS PWA: room list header must clear the status bar ---- */
+@media (max-width: 768px) {
+  .chatone-sidebar .sidebar-header {
+    min-height: calc(64px + env(safe-area-inset-top));
+    height: calc(64px + env(safe-area-inset-top));
+    padding-top: calc(8px + env(safe-area-inset-top));
+    align-items: center;
+  }
+
+  .chatone-sidebar .sidebar-logo,
+  .chatone-sidebar .sidebar-user,
+  .chatone-sidebar .btn-notify-icon,
+  .chatone-sidebar .btn-new-room-icon {
+    transform: translateY(2px);
+  }
+}
+
 /* ---- reduced-motion ---- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
