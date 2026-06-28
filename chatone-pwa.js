@@ -114,6 +114,20 @@ const idb = (() => {
   };
 })();
 
+const encodeStoreValue = value => {
+  const json = JSON.stringify(value);
+  const bytes = new TextEncoder().encode(json);
+  let bin = '';
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin);
+};
+
+const decodeStoreValue = raw => {
+  const bin = atob(raw);
+  const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+};
+
 /* ============================================================
  *  認証ストア（IndexedDB に base64 難読化して保存）
  * ============================================================ */
@@ -125,14 +139,14 @@ const authStore = {
     try {
       const raw = await idb.get('settings', this._KEY);
       if (raw) {
-        this._cache = JSON.parse(atob(raw));
+        this._cache = decodeStoreValue(raw);
         return this._cache;
       }
     } catch (e) { console.warn('[authStore] IndexedDB load failed; trying localStorage', e); }
     try {
       const raw = localStorage.getItem(this._LS_KEY);
       if (!raw) return null;
-      this._cache = JSON.parse(atob(raw));
+      this._cache = decodeStoreValue(raw);
       return this._cache;
     } catch (e) {
       console.warn('[authStore] localStorage load failed', e);
@@ -141,7 +155,7 @@ const authStore = {
   },
   async save(c) {
     this._cache = c;
-    const raw = btoa(JSON.stringify(c));
+    const raw = encodeStoreValue(c);
     try { localStorage.setItem(this._LS_KEY, raw); } catch (e) { console.warn('[authStore] localStorage save failed', e); }
     try { await idb.set('settings', this._KEY, raw); } catch (e) { console.warn('[authStore] IndexedDB save failed', e); }
   },
