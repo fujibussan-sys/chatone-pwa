@@ -327,13 +327,31 @@ const fb = {
 const usersFromRoomMembers = async () => {
   try {
     if (!_fbFn) await initFirebase();
-    const snap = await _fbFn.get(fb.roomsRef());
-    const val = snap.val() || {};
+    const safeDecode = c => {
+      if (!c) return c;
+      return String(c)
+        .replace(/_rb_/g,']').replace(/_lb_/g,'[').replace(/_slash_/g,'/')
+        .replace(/_dollar_/g,'$').replace(/_hash_/g,'#').replace(/_dot_/g,'.')
+        .replace(/_at_/g,'@').replace(/_us_/g,'_');
+    };
+    const [roomsSnap, dirSnap] = await Promise.all([
+      _fbFn.get(fb.roomsRef()),
+      _fbFn.get(_fbFn.ref('user_directory')).catch(() => null),
+    ]);
+    const val = roomsSnap.val() || {};
+    const dir = dirSnap?.val?.() || {};
+    const byCode = {};
+    Object.values(dir).forEach(u => {
+      if (u?.code) byCode[String(u.code).toLowerCase()] = u;
+    });
     const codes = new Set();
     Object.values(val).forEach(room => {
-      Object.keys(room?.members || {}).forEach(k => codes.add(decodeUserCode(k)));
+      Object.keys(room?.members || {}).forEach(k => codes.add(safeDecode(k)));
     });
-    return [...codes].sort().map(code => ({ code, name: code }));
+    return [...codes].sort().map(code => {
+      const u = byCode[String(code).toLowerCase()];
+      return { code, name: u?.name || code, email: u?.email || '' };
+    });
   } catch {
     return [];
   }
