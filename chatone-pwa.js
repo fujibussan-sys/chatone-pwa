@@ -1490,9 +1490,9 @@ const deleteMsgFn = async (msg) => {
 /* ============================================================
  *  スタンプ
  * ============================================================ */
-let _stampCache=null, _stampPickerOpen=false;
+let _stampCache=null, _stampPickerOpen=false, _stampLoadFailed=false;
 const loadStamps = async () => {
-  if (_stampCache||!CONFIG.APP_ID_STAMPS) return;
+  if (_stampCache||_stampLoadFailed||!CONFIG.APP_ID_STAMPS) return;
   try {
     const cached=await idb.get('cache','stamps');
     if (cached&&Date.now()-cached.ts<CONFIG.AVATAR_CACHE_TTL) {
@@ -1517,7 +1517,7 @@ const loadStamps = async () => {
       } catch {}
     }));
     await idb.set('cache','stamps',{ stamps:_stampCache, ts:Date.now() });
-  } catch(e) { console.error('スタンプ読み込みエラー:',e); _stampCache=[]; }
+  } catch(e) { console.warn('スタンプ読み込みを無効化しました:', e.message || e); _stampCache=[]; _stampLoadFailed=true; }
 };
 const toggleStampPicker = async () => {
   if (_stampPickerOpen) { document.getElementById('co-stamp-picker')?.remove(); _stampPickerOpen=false; return; }
@@ -1537,7 +1537,7 @@ const _stampOut = e => { const p=document.getElementById('co-stamp-picker'); if(
  *  アバター（IndexedDB キャッシュ + kintone fetch）
  * ============================================================ */
 const loadAllAvatars = async () => {
-  if (!CONFIG.APP_ID_AVATARS) return;
+  if (!CONFIG.APP_ID_AVATARS || loadAllAvatars.failed) return;
   try {
     const res=await api.getRecords(CONFIG.APP_ID_AVATARS,'',500);
     Object.values(state.avatarCache).forEach(v=>{ if(v?.url?.startsWith('blob:')) URL.revokeObjectURL(v.url); });
@@ -1558,7 +1558,7 @@ const loadAllAvatars = async () => {
       state.avatarCache[ckey]={ url:URL.createObjectURL(blob), recordId:rec.$id.value };
     }));
     refreshAllAvatarElements();
-  } catch(e) { console.error('アバター読み込みエラー:',e); }
+  } catch(e) { console.warn('アバター読み込みを無効化しました:', e.message || e); loadAllAvatars.failed = true; }
 };
 
 const getAvatarUrl = (type,target) => state.avatarCache[`${type}:${target}`]?.url||null;
