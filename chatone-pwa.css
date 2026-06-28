@@ -517,6 +517,15 @@
   overflow: hidden;
 }
 
+.chat-area.chat-area-returning {
+  animation: co-chat-return 0.21s ease-out both;
+}
+
+@keyframes co-chat-return {
+  from { transform: translateX(0); opacity: 1; }
+  to   { transform: translateX(28%); opacity: 0.82; }
+}
+
 /* ── ヘッダー ───────────────────────────────────────── */
 .chat-header {
   background: var(--co-header-bg);
