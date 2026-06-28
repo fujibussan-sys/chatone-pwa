@@ -19,7 +19,11 @@ const CONFIG = {
   // ★ Firebase Cloud Functions プロキシ URL（デプロイ後に設定）
   // Firebase コンソール > Functions で確認できる URL の「ベース部分」
   // 例: 'https://asia-northeast1-my-project-id.cloudfunctions.net'
-  PROXY_BASE_URL: 'https://asia-northeast1-chatone-fujibussan.cloudfunctions.net',
+  PROXY_ENDPOINTS: {
+    kintoneProxy:        'https://kintoneproxy-63pf5chkva-an.a.run.app',
+    kintoneFileUpload:   'https://kintonefileupload-63pf5chkva-an.a.run.app',
+    kintoneFileDownload: 'https://kintonefiledownload-63pf5chkva-an.a.run.app',
+  },
 
   FIREBASE: {
     apiKey:            'AIzaSyBlTJjF_fOYLpEQTsxt_X18s-A_4FGV-9U',
@@ -108,7 +112,7 @@ const authStore = {
     return c ? { 'X-Cybozu-Authorization': btoa(`${c.loginName}:${c.password}`) } : {};
   },
   base()      { return `https://${(this._cache?.subdomain || CONFIG.KINTONE_SUBDOMAIN)}.cybozu.com`; },
-  proxyUrl()  { return CONFIG.PROXY_BASE_URL; },
+  proxyUrl(name = 'kintoneProxy') { return CONFIG.PROXY_ENDPOINTS[name]; },
   subdomain() { return this._cache?.subdomain || CONFIG.KINTONE_SUBDOMAIN; },
 };
 
@@ -124,7 +128,7 @@ const api = {
   async _proxy(path, method = 'GET', params = {}, body = null) {
     const auth = authStore.header()['X-Cybozu-Authorization'];
     const subdomain = authStore.subdomain();
-    const proxyUrl = `${authStore.proxyUrl()}/kintoneProxy`;
+    const proxyUrl = authStore.proxyUrl('kintoneProxy');
     const r = await fetch(proxyUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -158,14 +162,14 @@ const api = {
   updateRecord(appId, id, record) { return this._put('/k/v1/record.json', { app:appId, id, record }); },
 
   async uploadFile(file) {
-    // プロキシは base64 + JSON 形式を期待する（FormDataではない）
+    // ファイルアップロードは multipart/form-data のため専用エンドポイントを使用
     const dataBase64 = await new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload  = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = () => reject(new Error('ファイル読み込み失敗'));
+      reader.onload = () => resolve(String(reader.result).split(',')[1]);
+      reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(file);
     });
-    const r = await fetch(`${authStore.proxyUrl()}/kintoneFileUpload`, {
+    const r = await fetch(authStore.proxyUrl('kintoneFileUpload'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -176,15 +180,12 @@ const api = {
         dataBase64,
       }),
     });
-    if (!r.ok) {
-      const e = await r.json().catch(() => ({}));
-      throw new Error(e.error || `kintone file upload ${r.status}`);
-    }
+    if (!r.ok) throw new Error(`kintone file upload ${r.status}`);
     return (await r.json()).fileKey;
   },
 
   async fetchFile(fileKey) {
-    const r = await fetch(`${authStore.proxyUrl()}/kintoneFileDownload`, {
+    const r = await fetch(authStore.proxyUrl('kintoneFileDownload'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -210,7 +211,7 @@ const api = {
         try {
           let all = []; let offset = 0;
           while (true) {
-            const d = await this._get('/k/v1/users.json', { offset, size:100 });
+            const d = await this._get('/v1/users.json', { offset, size:100 });
             all = all.concat(d.users||[]);
             if ((d.users||[]).length < 100) break;
             offset += 100;
@@ -225,16 +226,10 @@ const api = {
       }
     }
     const myCode = authStore.get()?.code;
-    const base = (this._userCache||[]).filter(u =>
-      !CONFIG.EXCLUDED_USER_CODES.includes(u.code) && u.code !== myCode
-    );
+    const base = (this._userCache||[]).filter(u => !CONFIG.EXCLUDED_USER_CODES.includes(u.code) && u.code !== myCode);
     if (!keyword) return base;
     const kw = keyword.toLowerCase();
-    return base.filter(u =>
-      (u.name && u.name.toLowerCase().includes(kw)) ||
-      (u.code && u.code.toLowerCase().includes(kw)) ||
-      (u.displayName && u.displayName.toLowerCase().includes(kw))
-    );
+    return base.filter(u => u.name.toLowerCase().includes(kw) || u.code.toLowerCase().includes(kw));
   },
 };
 
@@ -299,18 +294,7 @@ const initFirebase = async () => {
     onChildAdded: (r,cb) => { r.on('child_added',cb); return ()=>r.off('child_added',cb); },
     serverTimestamp: () => firebase.database.ServerValue.TIMESTAMP,
   };
-  if (!_auth.currentUser) {
-    await _auth.signInAnonymously();
-    // 匿名認証完了を確実に待機（モバイルブラウザ対応）
-    if (!_auth.currentUser) {
-      await new Promise((resolve) => {
-        const unsub = _auth.onAuthStateChanged(user => {
-          if (user) { unsub(); resolve(); }
-        });
-        setTimeout(() => { unsub(); resolve(); }, 5000);
-      });
-    }
-  }
+  if (!_auth.currentUser) await _auth.signInAnonymously();
 };
 
 /* ============================================================
@@ -503,7 +487,7 @@ const showLoginScreen = () => {
       // Firebase Functions プロキシ経由で kintone へ接続確認
       // /k/v1/records.json にlimit=1でアクセス（一般ユーザーが確実に使えるAPI）
       const auth = btoa(`${loginName}:${password}`);
-      const proxyUrl = CONFIG.PROXY_BASE_URL + '/kintoneProxy';
+      const proxyUrl = CONFIG.PROXY_ENDPOINTS.kintoneProxy;
 
       let verifyRes;
       try {
@@ -519,7 +503,7 @@ const showLoginScreen = () => {
           }),
         });
       } catch (networkErr) {
-        throw new Error('プロキシサーバーへの接続に失敗しました。PROXY_BASE_URL の設定を確認してください。');
+        throw new Error('プロキシサーバーへの接続に失敗しました。PROXY_ENDPOINTS の設定を確認してください。');
       }
       // 401/520=認証失敗、200/400/403=認証成功（権限エラーも認証は通っている）
       if (verifyRes.status === 401 || verifyRes.status === 520) {
@@ -529,29 +513,17 @@ const showLoginScreen = () => {
         throw new Error(`プロキシサーバーエラー (${verifyRes.status})`);
       }
 
-      // ユーザー情報を kintone API から直接取得（最も確実な方法）
+      // ユーザー情報をFirebase /user_directoryから取得
       let code = loginName, name = loginName;
       try {
-        // まず kintone の自分自身の情報を取得
-        const meRes = await fetch(CONFIG.PROXY_BASE_URL + '/kintoneProxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            subdomain, path: '/k/v1/users.json',
-            method: 'GET', auth,
-            params: { codes: [loginName] },
-          }),
-        });
-        if (meRes.ok) {
-          const meData = await meRes.json();
-          const u = meData.users?.[0];
-          if (u) { code = u.code || loginName; name = u.name || loginName; }
-        }
-      } catch {}
-      // kintone から取れなかった場合は Firebase user_directory を試みる
-      if (name === loginName) {
-        try {
-          if (_db) {
+        if (_db) {
+          const encKey = encodeUserCode(loginName);
+          const snap = await _db.ref(`/user_directory/${encKey}`).get();
+          if (snap.exists()) {
+            const u = snap.val();
+            code = u.code || loginName;
+            name = u.name || loginName;
+          } else {
             const allSnap = await _db.ref('/user_directory').get();
             if (allSnap.exists()) {
               const users = Object.values(allSnap.val() || {});
@@ -563,8 +535,8 @@ const showLoginScreen = () => {
               if (found) { code = found.code || loginName; name = found.name || loginName; }
             }
           }
-        } catch {}
-      }
+        }
+      } catch {}
 
       await authStore.save({ subdomain, loginName, password, code, name });
       await startApp();
@@ -617,12 +589,6 @@ const startApp = async () => {
     buildUI();
     bindEvents();
     loadBgColorPref();
-    // iOS/Android スクロール修正 — CSS では不十分な場合のインライン補完
-    const msgList = document.getElementById('message-list');
-    if (msgList) {
-      msgList.style.overflowY = 'auto';
-      msgList.style.webkitOverflowScrolling = 'touch';
-    }
     hideSplash();
 
     state.currentUser = authStore.get();
@@ -997,12 +963,7 @@ const renderMessages = (messages) => {
     el.querySelectorAll('.msg-attach-chip').forEach(chip => chip.addEventListener('click', ()=>handleAttachmentChipClick(chip)));
   });
 
-  if (scrolledToBottom) {
-    // requestAnimationFrame で確実にスクロール
-    requestAnimationFrame(() => {
-      list.scrollTop = list.scrollHeight;
-    });
-  }
+  if (scrolledToBottom) list.scrollTop = list.scrollHeight;
 };
 
 /* ============================================================
@@ -1099,10 +1060,7 @@ const selectRoom = async (room) => {
     else {
       list.innerHTML='';
       renderMessages(msgs);
-      // 画像読み込みなどを待ってからスクロール（モバイル対応）
-      requestAnimationFrame(() => {
-        setTimeout(() => { list.scrollTop = list.scrollHeight; }, 100);
-      });
+      list.scrollTop = list.scrollHeight;
       await markAsRead(msgs, room.id);
       if (CONFIG.APP_ID_AVATARS) refreshAllAvatarElements();
     }
@@ -1816,7 +1774,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const ctrl=new AbortController();
     const timer=setTimeout(()=>ctrl.abort(),5000);
     const auth=btoa(`${creds.loginName}:${creds.password}`);
-    const r=await fetch(CONFIG.PROXY_BASE_URL + '/kintoneProxy',{
+    const r=await fetch(CONFIG.PROXY_ENDPOINTS.kintoneProxy,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
