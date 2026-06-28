@@ -5,7 +5,7 @@
  *  ・このファイルは / (ルート) に置いてください
  * ===================================================== */
 
-const CACHE_NAME   = 'chatone-pwa-v7';
+const CACHE_NAME   = 'chatone-pwa-v8';
 const ASSETS = [
   './',
   './index.html',
