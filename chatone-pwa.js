@@ -306,8 +306,12 @@ const kintoneAttachment = {
   },
   async fetchBlobUrl(recordId, fileKey = '') {
     if (fileKey) {
-      const blob = await api.fetchFile(fileKey);
-      return URL.createObjectURL(blob);
+      try {
+        const blob = await api.fetchFile(fileKey);
+        return URL.createObjectURL(blob);
+      } catch (e) {
+        console.warn('[attachment] direct fileKey download failed; falling back to record lookup', e);
+      }
     }
     let rec = {};
     try {
