@@ -5,22 +5,23 @@
  *  ・このファイルは / (ルート) に置いてください
  * ===================================================== */
 
-const CACHE_NAME   = 'chatone-pwa-v2';
+const CACHE_NAME   = 'chatone-pwa-v3';
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/chatone-pwa.js',
-  '/chatone-pwa.css',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
+  './',
+  './index.html',
+  './manifest.json',
+  './chatone-pwa.js',
+  './chatone-pwa.css',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
 ];
+const assetUrl = (path) => new URL(path, self.registration.scope).toString();
 
 // インストール時にアセットをキャッシュ
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(ASSETS))
+      .then(cache => cache.addAll(ASSETS.map(assetUrl)))
       .then(() => self.skipWaiting())
   );
 });
@@ -53,7 +54,7 @@ self.addEventListener('fetch', (e) => {
   // 同一オリジンのナビゲーションリクエスト → index.html を返す（SPA対応）
   if (e.request.mode === 'navigate') {
     e.respondWith(
-      fetch(e.request).catch(() => caches.match('/index.html'))
+      fetch(e.request).catch(() => caches.match(assetUrl('./index.html')))
     );
     return;
   }
