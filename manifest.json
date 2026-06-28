@@ -2,7 +2,7 @@
   "name": "Chatone",
   "short_name": "Chatone",
   "description": "kintone チャットアプリ",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#06b35a",
   "theme_color": "#06b35a",
@@ -23,7 +23,7 @@
     {
       "name": "新しいトーク",
       "short_name": "新規トーク",
-      "url": "/?new=1",
+      "url": "./?new=1",
       "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96" }]
     }
   ]
