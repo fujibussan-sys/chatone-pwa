@@ -5,7 +5,7 @@
  *  ・このファイルは / (ルート) に置いてください
  * ===================================================== */
 
-const CACHE_NAME   = 'chatone-pwa-v6';
+const CACHE_NAME   = 'chatone-pwa-v7';
 const ASSETS = [
   './',
   './index.html',
@@ -21,7 +21,7 @@ const assetUrl = (path) => new URL(path, self.registration.scope).toString();
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(ASSETS.map(assetUrl)))
+      .then(cache => Promise.allSettled(ASSETS.map(assetUrl => cache.add(assetUrl))))
       .then(() => self.skipWaiting())
   );
 });
