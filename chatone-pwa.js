@@ -305,28 +305,35 @@ const kintoneAttachment = {
     return { name:file.name, size:file.size, type:file.type, fileKey, kintone_record_id:res.id };
   },
   async fetchBlobUrl(recordId, fileKey = '') {
+    let lastError = null;
+    let rec = {};
+    if (recordId) {
+      try {
+        const res = await api.getRecord(CONFIG.APP_ID_ATTACHMENTS, recordId);
+        rec = res.record || {};
+      } catch (e) {
+        lastError = e;
+        const idNum = Number(recordId);
+        if (Number.isFinite(idNum)) {
+          try {
+            const res = await api.getRecords(CONFIG.APP_ID_ATTACHMENTS, `$id = ${idNum}`, 1);
+            rec = res.records?.[0] || {};
+          } catch (e2) { lastError = e2; }
+        }
+      }
+      const file = rec[CONFIG.ATTACHMENT_FIELD_CODE]?.value?.[0];
+      if (file?.fileKey) {
+        const blob = await api.fetchFile(file.fileKey);
+        return URL.createObjectURL(blob);
+      }
+    }
     if (fileKey) {
       try {
         const blob = await api.fetchFile(fileKey);
         return URL.createObjectURL(blob);
-      } catch (e) {
-        console.warn('[attachment] direct fileKey download failed; falling back to record lookup', e);
-      }
+      } catch (e) { lastError = e; }
     }
-    let rec = {};
-    try {
-      const res = await api.getRecord(CONFIG.APP_ID_ATTACHMENTS, recordId);
-      rec = res.record || {};
-    } catch (e) {
-      const idNum = Number(recordId);
-      if (!Number.isFinite(idNum)) throw e;
-      const res = await api.getRecords(CONFIG.APP_ID_ATTACHMENTS, `$id = ${idNum}`, 1);
-      rec = res.records?.[0] || {};
-    }
-    const file = rec[CONFIG.ATTACHMENT_FIELD_CODE]?.value?.[0];
-    if (!file?.fileKey) throw new Error('添付ファイルが見つかりません');
-    const blob = await api.fetchFile(file.fileKey);
-    return URL.createObjectURL(blob);
+    throw lastError || new Error('添付ファイルが見つかりません');
   },
 };
 
@@ -1637,10 +1644,11 @@ const deleteMsgFn = async (msg) => {
  *  スタンプ
  * ============================================================ */
 let _stampCache=null, _stampPickerOpen=false, _stampLoadFailed=false;
+const STAMP_CACHE_KEY = 'stamps-v2';
 const loadStamps = async () => {
   if (_stampCache||_stampLoadFailed||!CONFIG.APP_ID_STAMPS) return;
   try {
-    const cached=await idb.get('cache','stamps');
+    const cached=await idb.get('cache',STAMP_CACHE_KEY);
     if (cached&&Date.now()-cached.ts<CONFIG.AVATAR_CACHE_TTL) {
       _stampCache=cached.stamps;
       _stampCache.forEach(s=>{
@@ -1655,14 +1663,15 @@ const loadStamps = async () => {
     const res=await api.getRecords(CONFIG.APP_ID_STAMPS,'order by sort_order asc',200);
     _stampCache=res.records||[];
     await Promise.all(_stampCache.map(async s=>{
-      const f=s.stamp_file?.value?.[0]||s.stamp_image?.value?.[0]; if(!f?.fileKey) return;
+      const f=s.image_file?.value?.[0]||s.stamp_file?.value?.[0]||s.stamp_image?.value?.[0]; if(!f?.fileKey) return;
       try {
         const blob=await api.fetchFile(f.fileKey);
         const dataUrl=await new Promise(r=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.readAsDataURL(blob); });
         s._dataUrl=dataUrl; s._objectUrl=URL.createObjectURL(blob);
       } catch {}
     }));
-    await idb.set('cache','stamps',{ stamps:_stampCache, ts:Date.now() });
+    console.info('[stamps] loaded', { count:_stampCache.length, images:_stampCache.filter(s=>s._objectUrl).length });
+    await idb.set('cache',STAMP_CACHE_KEY,{ stamps:_stampCache, ts:Date.now() });
   } catch(e) { console.warn('スタンプ読み込みを無効化しました:', e.message || e); _stampCache=[]; _stampLoadFailed=true; }
 };
 const toggleStampPicker = async () => {
@@ -1672,8 +1681,8 @@ const toggleStampPicker = async () => {
   const picker=document.createElement('div'); picker.id='co-stamp-picker'; picker.className='co-stamp-picker';
   picker.innerHTML = !_stampCache?.length
     ? '<div style="padding:16px;color:#6b7280">スタンプがありません</div>'
-    : _stampCache.map(s=>{ const sid=s.stamp_id?.value||s.$id?.value||''; const src=s._objectUrl||''; return src?`<div class="stamp-item" data-stamp-id="${escapeHTML(sid)}" title="${escapeHTML(s.stamp_name?.value||'')}"><img src="${escapeHTML(src)}" alt=""/></div>`:''; }).join('');
-  picker.querySelectorAll('.stamp-item').forEach(el=>el.addEventListener('click',()=>{ sendStamp(el.dataset.stampId); document.getElementById('co-stamp-picker')?.remove(); _stampPickerOpen=false; }));
+    : `<div class="co-stamp-grid">${_stampCache.map(s=>{ const sid=s.stamp_id?.value||s.$id?.value||''; const src=s._objectUrl||''; return `<button class="co-stamp-item" data-stamp-id="${escapeHTML(sid)}" title="${escapeHTML(s.stamp_name?.value||'')}">${src?`<img class="co-stamp-img" src="${escapeHTML(src)}" alt=""/>`:'<span class="msg-stamp-fallback">🎭</span>'}</button>`; }).join('')}</div>`;
+  picker.querySelectorAll('.co-stamp-item').forEach(el=>el.addEventListener('click',()=>{ sendStamp(el.dataset.stampId); document.getElementById('co-stamp-picker')?.remove(); _stampPickerOpen=false; }));
   document.querySelector('.input-area')?.appendChild(picker);
   setTimeout(()=>document.addEventListener('click',_stampOut),50);
 };
