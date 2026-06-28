@@ -195,6 +195,7 @@ const api = {
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
       console.warn('[kintoneProxy] request failed:', { status: r.status, path, params, body: e });
+      console.warn('[kintoneProxy] request failed detail:', JSON.stringify({ status: r.status, path, params, body: e }));
       throw new Error(e.message || e.error || `kintone ${r.status}`);
     }
     return r.json();
@@ -217,7 +218,7 @@ const api = {
   getLoginUser() { return authStore.get(); },
 
   getRecords(appId, query='', limit=100) { const q = [query, `limit ${limit}`].filter(Boolean).join(' '); return this._get('/k/v1/records.json', { app:appId, query:q }); },
-  getRecord(appId, id) { return this._get('/k/v1/record.json', { app:appId, id }); },
+  getRecord(appId, id) { return this._get('/k/v1/record.json', { app:appId, id:Number(id) }); },
   addRecord(appId, record)    { return this._post('/k/v1/record.json', { app:appId, record }); },
   updateRecord(appId, id, record) { return this._put('/k/v1/record.json', { app:appId, id, record }); },
 
@@ -308,10 +309,17 @@ const kintoneAttachment = {
       const blob = await api.fetchFile(fileKey);
       return URL.createObjectURL(blob);
     }
-    const res = await api.getRecord(CONFIG.APP_ID_ATTACHMENTS, recordId);
-    const rec = res.record || {};
-    const f = res.records?.[0]?.[CONFIG.ATTACHMENT_FIELD_CODE]?.value?.[0];
-    const file = f || rec[CONFIG.ATTACHMENT_FIELD_CODE]?.value?.[0];
+    let rec = {};
+    try {
+      const res = await api.getRecord(CONFIG.APP_ID_ATTACHMENTS, recordId);
+      rec = res.record || {};
+    } catch (e) {
+      const idNum = Number(recordId);
+      if (!Number.isFinite(idNum)) throw e;
+      const res = await api.getRecords(CONFIG.APP_ID_ATTACHMENTS, `$id = ${idNum}`, 1);
+      rec = res.records?.[0] || {};
+    }
+    const file = rec[CONFIG.ATTACHMENT_FIELD_CODE]?.value?.[0];
     if (!file?.fileKey) throw new Error('添付ファイルが見つかりません');
     const blob = await api.fetchFile(file.fileKey);
     return URL.createObjectURL(blob);
@@ -1640,7 +1648,7 @@ const loadStamps = async () => {
       });
       return;
     }
-    const res=await api.getRecords(CONFIG.APP_ID_STAMPS,'',200);
+    const res=await api.getRecords(CONFIG.APP_ID_STAMPS,'order by sort_order asc',200);
     _stampCache=res.records||[];
     await Promise.all(_stampCache.map(async s=>{
       const f=s.stamp_file?.value?.[0]||s.stamp_image?.value?.[0]; if(!f?.fileKey) return;
@@ -1863,9 +1871,21 @@ const formatTime = ms => {
 const formatDateTime = ms => { if(!ms) return ''; const d=new Date(ms); return d.toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); };
 
 const showRoomListMobile = () => {
-  document.getElementById('chatone-sidebar')?.classList.remove('hidden-mobile');
-  document.getElementById('chat-area')?.classList.add('hidden');
-  document.getElementById('chat-empty')?.classList.remove('hidden');
+  const sidebar = document.getElementById('chatone-sidebar');
+  const chatArea = document.getElementById('chat-area');
+  const empty = document.getElementById('chat-empty');
+  sidebar?.classList.remove('hidden-mobile');
+  if (state.isMobile && chatArea && !chatArea.classList.contains('hidden')) {
+    chatArea.classList.add('chat-area-returning');
+    setTimeout(() => {
+      chatArea.classList.add('hidden');
+      chatArea.classList.remove('chat-area-returning');
+      empty?.classList.remove('hidden');
+    }, 210);
+    return;
+  }
+  chatArea?.classList.add('hidden');
+  empty?.classList.remove('hidden');
 };
 
 /* ============================================================
