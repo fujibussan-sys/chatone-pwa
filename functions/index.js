@@ -1,219 +1,231 @@
-/* ================================================================
- *  functions/index.js
- *  Firebase Cloud Functions — kintone CORS プロキシ
- *
- *  役割:
- *    GitHub Pages (github.io) はブラウザの CORS ポリシーにより
- *    cybozu.com へ直接 fetch できないため、Firebase Functions を
- *    サーバーサイドのプロキシとして中継する。
- *
- *  エンドポイント:
- *    POST https://<region>-<project>.cloudfunctions.net/kintoneProxy
- *
- *  リクエストボディ (JSON):
- *    {
- *      subdomain : string,          // xxx.cybozu.com の xxx 部分
- *      path      : string,          // /k/v1/records.json など
- *      method    : 'GET'|'POST'|'PUT', // 省略時 GET
- *      auth      : string,          // X-Cybozu-Authorization ヘッダ値
- *      params    : object,          // GETクエリパラメータ (任意)
- *      body      : object,          // POST/PUTボディ (任意)
- *    }
- *
- *  レスポンス:
- *    kintone からのレスポンスをそのまま返す。
- *    エラー時は { error: string, status: number } を返す。
- *
- *  ⚠️ セキュリティ注意:
- *    - kintone 認証情報はブラウザ→Functions→kintone の経路でのみ流れ、
- *      Firebase Realtime Database や Functions ログには保存しない。
- *    - allowedOrigins に GitHub Pages の URL を必ず設定すること。
- *    - 本番運用では Firebase App Check の導入を推奨。
- * ================================================================ */
-
+/**
+ * Chatone PWA — Firebase Cloud Functions v6 対応版
+ * firebase-functions v6 では functions.region() が廃止され
+ * onRequest / onValueCreated などを直接インポートして使う
+ */
 const { onRequest } = require('firebase-functions/v2/https');
-const { defineString } = require('firebase-functions/params');
-const fetch = require('node-fetch');
+const { onValueCreated } = require('firebase-functions/v2/database');
+const { setGlobalOptions } = require('firebase-functions/v2');
+const admin = require('firebase-admin');
+const https = require('https');
 
-// ── 許可するオリジン（GitHub Pages の URL を追記してください） ──────────
-const ALLOWED_ORIGINS = [
-  'https://fujibussan-sys.github.io',  // ← あなたの GitHub Pages URL
-  'http://localhost:3000',              // ローカル開発用
-  'http://127.0.0.1:5500',             // VS Code Live Server 用
-];
+admin.initializeApp();
 
-// ── CORS ヘッダーをセットするヘルパー ──────────────────────────────────
-const setCorsHeaders = (req, res) => {
-  const origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.includes(origin)) {
-    res.set('Access-Control-Allow-Origin', origin);
-  }
-  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type');
-  res.set('Access-Control-Max-Age', '3600');
-};
+// デフォルトリージョンを東京に設定
+setGlobalOptions({ region: 'asia-northeast1' });
 
-// ── メインプロキシ関数 ────────────────────────────────────────────────
-exports.kintoneProxy = onRequest(
-  {
-    region: 'asia-northeast1', // 東京リージョン（日本のkintoneに近い）
-    timeoutSeconds: 30,
-    memory: '128MiB',
-  },
-  async (req, res) => {
-    setCorsHeaders(req, res);
-
-    // プリフライトリクエスト (OPTIONS) への応答
-    if (req.method === 'OPTIONS') {
-      res.status(204).send('');
-      return;
-    }
-
-    // POST のみ受け付ける
-    if (req.method !== 'POST') {
-      res.status(405).json({ error: 'Method Not Allowed' });
-      return;
-    }
-
-    const { subdomain, path, method = 'GET', auth, params, body } = req.body || {};
-
-    // 必須パラメータのバリデーション
-    if (!subdomain || !path || !auth) {
-      res.status(400).json({ error: 'subdomain, path, auth は必須です' });
-      return;
-    }
-
-    // subdomain のサニタイズ（英数字とハイフンのみ許可）
-    if (!/^[a-zA-Z0-9-]+$/.test(subdomain)) {
-      res.status(400).json({ error: 'subdomain に不正な文字が含まれています' });
-      return;
-    }
-
-    // kintone の許可パスのホワイトリスト
-    const ALLOWED_PATHS = [
-      '/k/v1/apps.json',
-      '/k/v1/records.json',
-      '/k/v1/record.json',
-      '/k/v1/file.json',
-      '/v1/users.json',
-      '/v1/user.json',
-    ];
-    const isAllowed = ALLOWED_PATHS.some(p => path.startsWith(p));
-    if (!isAllowed) {
-      res.status(403).json({ error: `許可されていないパス: ${path}` });
-      return;
-    }
-
-    // kintone への URL を組み立て
-    let targetUrl = `https://${subdomain}.cybozu.com${path}`;
-    if (method === 'GET' && params && Object.keys(params).length > 0) {
-      const qs = new URLSearchParams();
-      Object.entries(params).forEach(([k, v]) => {
-        if (Array.isArray(v)) v.forEach(i => qs.append(k, i));
-        else if (v != null) qs.set(k, String(v));
+/* ============================================================
+ *  kintone への HTTPS リクエスト共通関数
+ * ============================================================ */
+const kintoneRequest = (subdomain, fullPath, method, authHeader, body) =>
+  new Promise((resolve, reject) => {
+    const bodyStr = (method !== 'GET' && body) ? JSON.stringify(body) : null;
+    const options = {
+      hostname: `${subdomain}.cybozu.com`,
+      path: fullPath,
+      method,
+      headers: {
+        'X-Cybozu-Authorization': authHeader,
+        'Content-Type': 'application/json',
+        ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {}),
+      },
+    };
+    const req = https.request(options, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
+        catch { resolve({ status: res.statusCode, body: raw }); }
       });
-      targetUrl += '?' + qs.toString();
+    });
+    req.on('error', reject);
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+
+/* ============================================================
+ *  kintone API プロキシ（GET / POST / PUT）
+ * ============================================================ */
+exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  if (req.method !== 'POST')   { res.status(405).send('Method Not Allowed'); return; }
+
+  const { subdomain, auth, path, method = 'GET', params = {}, body } = req.body;
+  if (!subdomain || !auth || !path) {
+    res.status(400).json({ error: 'subdomain, auth, path は必須です' }); return;
+  }
+
+  // params をクエリストリングに変換
+  let fullPath = path;
+  if (method === 'GET' && Object.keys(params).length > 0) {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (Array.isArray(v)) v.forEach(i => qs.append(k, i));
+      else if (v != null) qs.append(k, String(v));
+    });
+    fullPath = `${path}?${qs.toString()}`;
+  }
+
+  try {
+    const { status, body: kb } = await kintoneRequest(
+      subdomain, fullPath, method, auth, method !== 'GET' ? body : null
+    );
+    // kintone エラーレスポンスをそのまま返す（クライアント側で message フィールドを使用）
+    if (status >= 400 && typeof kb === 'object' && !kb.message) {
+      kb.message = kb.error || kb.errors || `kintone error ${status}`;
+    }
+    res.status(status).json(kb);
+  } catch (err) {
+    res.status(500).json({ error: err.message, message: err.message });
+  }
+});
+
+/* ============================================================
+ *  ファイルアップロード プロキシ
+ * ============================================================ */
+exports.kintoneFileUpload = onRequest(
+  { cors: true, memory: '512MiB', timeoutSeconds: 120 },
+  async (req, res) => {
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+
+    const { subdomain, auth, filename, mimeType, dataBase64 } = req.body;
+    if (!subdomain || !auth || !filename || !dataBase64) {
+      res.status(400).json({ error: 'subdomain, auth, filename, dataBase64 は必須です' }); return;
     }
 
-    // kintone へのリクエストヘッダー
-    const headers = {
-      'X-Cybozu-Authorization': auth,
-      'Content-Type': 'application/json',
+    const fileBuffer = Buffer.from(dataBase64, 'base64');
+    const boundary   = `----FormBoundary${Date.now().toString(16)}`;
+    const header     = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimeType || 'application/octet-stream'}\r\n\r\n`;
+    const footer     = `\r\n--${boundary}--\r\n`;
+    const bodyBuf    = Buffer.concat([Buffer.from(header), fileBuffer, Buffer.from(footer)]);
+
+    const options = {
+      hostname: `${subdomain}.cybozu.com`,
+      path: '/k/v1/file.json',
+      method: 'POST',
+      headers: {
+        'X-Cybozu-Authorization': auth,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': bodyBuf.length,
+      },
     };
 
-    // kintone にリクエストを中継
-    let kintoneRes;
     try {
-      kintoneRes = await fetch(targetUrl, {
-        method,
-        headers,
-        body: (method !== 'GET' && body) ? JSON.stringify(body) : undefined,
+      await new Promise((resolve, reject) => {
+        const kreq = https.request(options, kres => {
+          const chunks = [];
+          kres.on('data', c => chunks.push(c));
+          kres.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            try { res.status(kres.statusCode).json(JSON.parse(raw)); }
+            catch { res.status(kres.statusCode).send(raw); }
+            resolve();
+          });
+        });
+        kreq.on('error', reject);
+        kreq.write(bodyBuf);
+        kreq.end();
       });
-    } catch (e) {
-      console.error('[kintoneProxy] fetch error:', e.message);
-      res.status(502).json({ error: 'kintone への接続に失敗しました', detail: e.message });
-      return;
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
-
-    // kintone のレスポンスをそのまま返す
-    const responseBody = await kintoneRes.text();
-    res
-      .status(kintoneRes.status)
-      .set('Content-Type', 'application/json')
-      .send(responseBody);
   }
 );
 
-/* ================================================================
- *  ファイルアップロード専用エンドポイント
- *  kintone の /k/v1/file.json (multipart/form-data) を中継する
- * ================================================================ */
-const Busboy = require('@fastify/busboy');
-const { Readable } = require('stream');
-const FormData = require('form-data');
-
-exports.kintoneFileProxy = onRequest(
-  {
-    region: 'asia-northeast1',
-    timeoutSeconds: 60,
-    memory: '256MiB',
-  },
+/* ============================================================
+ *  ファイルダウンロード プロキシ
+ * ============================================================ */
+exports.kintoneFileDownload = onRequest(
+  { cors: true, memory: '512MiB', timeoutSeconds: 120 },
   async (req, res) => {
-    setCorsHeaders(req, res);
-
     if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
-    if (req.method !== 'POST')    { res.status(405).json({ error: 'Method Not Allowed' }); return; }
 
-    const auth      = req.headers['x-cybozu-authorization'];
-    const subdomain = req.headers['x-kintone-subdomain'];
-
-    if (!auth || !subdomain) {
-      res.status(400).json({ error: 'x-cybozu-authorization と x-kintone-subdomain ヘッダが必要です' });
-      return;
-    }
-    if (!/^[a-zA-Z0-9-]+$/.test(subdomain)) {
-      res.status(400).json({ error: 'subdomain に不正な文字が含まれています' });
-      return;
+    const { subdomain, auth, fileKey } = req.body;
+    if (!subdomain || !auth || !fileKey) {
+      res.status(400).json({ error: 'subdomain, auth, fileKey は必須です' }); return;
     }
 
-    // busboy でアップロードされたファイルを受け取る
-    const busboy = Busboy({ headers: req.headers });
-    const form   = new FormData();
+    const options = {
+      hostname: `${subdomain}.cybozu.com`,
+      path: `/k/v1/file.json?fileKey=${encodeURIComponent(fileKey)}`,
+      method: 'GET',
+      headers: { 'X-Cybozu-Authorization': auth },
+    };
 
-    await new Promise((resolve, reject) => {
-      busboy.on('file', (fieldname, file, info) => {
-        const { filename, mimeType } = info;
-        form.append(fieldname, file, { filename, contentType: mimeType });
-      });
-      busboy.on('finish', resolve);
-      busboy.on('error', reject);
-      if (req.rawBody) {
-        Readable.from(req.rawBody).pipe(busboy);
-      } else {
-        req.pipe(busboy);
-      }
-    });
-
-    let kintoneRes;
     try {
-      kintoneRes = await fetch(
-        `https://${subdomain}.cybozu.com/k/v1/file.json`,
-        {
-          method: 'POST',
-          headers: {
-            'X-Cybozu-Authorization': auth,
-            ...form.getHeaders(),
-          },
-          body: form,
-        }
-      );
-    } catch (e) {
-      console.error('[kintoneFileProxy] fetch error:', e.message);
-      res.status(502).json({ error: 'kintone へのファイルアップロードに失敗しました' });
-      return;
+      await new Promise((resolve, reject) => {
+        const kreq = https.request(options, kres => {
+          const chunks = [];
+          kres.on('data', c => chunks.push(c));
+          kres.on('end', () => {
+            const buf = Buffer.concat(chunks);
+            res.set('Content-Type', kres.headers['content-type'] || 'application/octet-stream');
+            res.set('Content-Disposition', kres.headers['content-disposition'] || '');
+            res.status(kres.statusCode).send(buf);
+            resolve();
+          });
+        });
+        kreq.on('error', reject);
+        kreq.end();
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
-
-    const responseBody = await kintoneRes.text();
-    res.status(kintoneRes.status).set('Content-Type', 'application/json').send(responseBody);
   }
 );
+
+/* ============================================================
+ *  FCM プッシュ通知（新着メッセージ → 全メンバーに送信）
+ * ============================================================ */
+exports.onNewMessage = onValueCreated(
+  { ref: '/messages/{roomId}/{messageId}', instance: process.env.FIREBASE_DATABASE_INSTANCE },
+  async (event) => {
+    const msg    = event.data.val();
+    const roomId = event.params.roomId;
+    if (!msg || ['system', 'deleted'].includes(msg.msg_type)) return null;
+
+    const roomSnap = await admin.database().ref(`/rooms/${roomId}`).get();
+    const room     = roomSnap.val();
+    if (!room?.members) return null;
+
+    const senderEncoded = encodeUserCode(msg.sender);
+    const memberKeys    = Object.keys(room.members).filter(k => k !== senderEncoded);
+    const tokenSnaps    = await Promise.all(
+      memberKeys.map(k => admin.database().ref(`/fcm_tokens/${k}`).get())
+    );
+    const tokens = tokenSnaps.map(s => s.val()?.token).filter(Boolean);
+    if (!tokens.length) return null;
+
+    const roomName = room.room_name || 'Chatone';
+    const body = msg.body
+      ? (msg.body.length > 80 ? msg.body.slice(0, 80) + '…' : msg.body)
+      : msg.msg_type === 'stamp' ? '(スタンプ)' : '(ファイル)';
+
+    await admin.messaging().sendEachForMulticast({
+      tokens,
+      notification: { title: `${roomName}  ${msg.sender_name || msg.sender}`, body },
+      data: { roomId },
+      webpush: {
+        notification: {
+          icon: '/icons/icon-192.png',
+          badge: '/icons/icon-72.png',
+          tag: roomId,
+          renotify: 'true',
+        },
+        fcmOptions: { link: `https://fujibussan-sys.github.io/?room=${roomId}` },
+      },
+      android: { notification: { sound: 'default', channelId: 'chatone' } },
+      apns:    { payload: { aps: { sound: 'default', badge: 1 } } },
+    });
+    return null;
+  }
+);
+
+function encodeUserCode(code) {
+  if (!code) return code;
+  return String(code)
+    .replace(/_/g,'_us_').replace(/@/g,'_at_').replace(/\./g,'_dot_')
+    .replace(/#/g,'_hash_').replace(/\$/g,'_dollar_').replace(/\//g,'_slash_')
+    .replace(/\[/g,'_lb_').replace(/\]/g,'_rb_');
+}
