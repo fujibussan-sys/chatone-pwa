@@ -222,7 +222,7 @@ const api = {
           const dir = {};
           this._userCache.forEach(u => { dir[userKey(u.code)] = u; });
           _db?.ref('/user_directory').set(dir).catch(()=>{});
-        } catch(e) { console.warn('[api] ユーザー一覧取得失敗:', e.message); this._userCache = []; }
+        } catch(e) { console.warn('[api] ユーザー一覧取得失敗:', e.message); this._userCache = await usersFromRoomMembers(); this._userCacheTs = now; }
       }
     }
     const myCode = authStore.get()?.code;
@@ -322,6 +322,42 @@ const fb = {
     const val = snap.val() || {};
     return Object.entries(val).map(([id,m])=>({id,...m})).sort((a,b)=>a.sent_at-b.sent_at);
   },
+};
+
+const usersFromRoomMembers = async () => {
+  try {
+    if (!_fbFn) await initFirebase();
+    const snap = await _fbFn.get(fb.roomsRef());
+    const val = snap.val() || {};
+    const codes = new Set();
+    Object.values(val).forEach(room => {
+      Object.keys(room?.members || {}).forEach(k => codes.add(decodeUserCode(k)));
+    });
+    return [...codes].sort().map(code => ({ code, name: code }));
+  } catch {
+    return [];
+  }
+};
+
+const loginCandidates = loginName => {
+  const raw = String(loginName || '').trim();
+  const lower = raw.toLowerCase();
+  const list = [raw, lower];
+  if (raw && !raw.includes('@')) list.push(`${lower}@fujibussan.co.jp`);
+  return [...new Set(list.filter(Boolean))];
+};
+
+const resolveUserFromRooms = async loginName => {
+  const users = await usersFromRoomMembers();
+  const candidates = loginCandidates(loginName).map(v => v.toLowerCase());
+  const exact = users.find(u => candidates.includes(String(u.code).toLowerCase()));
+  if (exact) return exact;
+  const prefix = String(loginName || '').trim().toLowerCase();
+  if (prefix && !prefix.includes('@')) {
+    const byMailPrefix = users.find(u => String(u.code).toLowerCase().startsWith(`${prefix}@`));
+    if (byMailPrefix) return byMailPrefix;
+  }
+  return null;
 };
 
 /* ============================================================
@@ -538,6 +574,12 @@ const showLoginScreen = () => {
         }
       } catch {}
 
+      const resolved = await resolveUserFromRooms(loginName);
+      if (resolved && resolved.code) {
+        code = resolved.code;
+        if (name === loginName) name = resolved.name || resolved.code;
+      }
+
       await authStore.save({ subdomain, loginName, password, code, name });
       await startApp();
     } catch(e) {
@@ -610,8 +652,17 @@ const startApp = async () => {
       api.searchUsers('').catch(e => console.warn('ユーザー一覧先読み失敗:', e)),
       fb.getRooms(state.currentUser.code),
     ]);
+    let effectiveRooms = rooms;
+    if (!effectiveRooms.length) {
+      const resolved = await resolveUserFromRooms(state.currentUser.loginName || state.currentUser.code);
+      if (resolved && resolved.code && resolved.code !== state.currentUser.code) {
+        state.currentUser = { ...state.currentUser, code: resolved.code, name: resolved.name || state.currentUser.name };
+        await authStore.save(state.currentUser);
+        effectiveRooms = await fb.getRooms(state.currentUser.code);
+      }
+    }
     state.rooms = {};
-    rooms.forEach(r => { state.rooms[r.id] = r; });
+    effectiveRooms.forEach(r => { state.rooms[r.id] = r; });
     updateTitleBadge();
     renderRoomList(state.rooms);
     attachRoomsListener();
