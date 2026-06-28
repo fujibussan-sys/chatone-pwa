@@ -153,7 +153,7 @@ const api = {
 
   getLoginUser() { return authStore.get(); },
 
-  getRecords(appId, query='', size=null) { const p={app:appId}; if(query) p.query=query; if(size) p.size=String(size); return this._get('/k/v1/records.json', p); },
+  getRecords(appId, query='', limit=100) { const q = [query, `limit ${limit}`].filter(Boolean).join(' '); return this._get('/k/v1/records.json', { app:appId, query:q }); },
   addRecord(appId, record)    { return this._post('/k/v1/record.json', { app:appId, record }); },
   updateRecord(appId, id, record) { return this._put('/k/v1/record.json', { app:appId, id, record }); },
 
@@ -506,7 +506,6 @@ const showLoginScreen = () => {
       let code = loginName, name = loginName;
       try {
         if (_db) {
-          // 1) loginNameをエンコードして直接引く
           const encKey = encodeUserCode(loginName);
           const snap = await _db.ref(`/user_directory/${encKey}`).get();
           if (snap.exists()) {
@@ -514,7 +513,6 @@ const showLoginScreen = () => {
             code = u.code || loginName;
             name = u.name || loginName;
           } else {
-            // 2) 全件スキャンしてloginNameに一致するエントリを探す
             const allSnap = await _db.ref('/user_directory').get();
             if (allSnap.exists()) {
               const users = Object.values(allSnap.val() || {});
@@ -1770,7 +1768,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         subdomain:creds.subdomain, path:'/k/v1/records.json',
-        method:'GET', auth, params:{app:String(CONFIG.APP_ID_STAMPS), size:'1'},
+        method:'GET', auth, params:{app:String(CONFIG.APP_ID_STAMPS), query:'limit 1 offset 0'},
       }),
       signal:ctrl.signal,
     });
