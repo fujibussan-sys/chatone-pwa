@@ -6,21 +6,22 @@
  * ===================================================== */
 
 const CACHE_NAME   = 'chatone-pwa-v2';
+const ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/chatone-pwa.js',
+  '/chatone-pwa.css',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+];
 
-// インストール時：addAll失敗を避けるため個別にキャッシュ（1つ失敗しても続行）
+// インストール時にアセットをキャッシュ
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open(CACHE_NAME).then(async cache => {
-      const assets = [
-        './',
-        './index.html',
-        './manifest.json',
-        './chatone-pwa.js',
-        './chatone-pwa.css',
-      ];
-      await Promise.allSettled(assets.map(url => cache.add(url).catch(() => {})));
-      return self.skipWaiting();
-    })
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(ASSETS))
+      .then(() => self.skipWaiting())
   );
 });
 
