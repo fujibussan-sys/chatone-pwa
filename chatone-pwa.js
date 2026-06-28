@@ -200,7 +200,7 @@ const api = {
         try {
           let all = []; let offset = 0;
           while (true) {
-            const d = await this._get('/v1/users.json', { offset, size:100, enabled:true });
+            const d = await this._get('/v1/users.json', { offset, size:100 });
             all = all.concat(d.users||[]);
             if ((d.users||[]).length < 100) break;
             offset += 100;
@@ -473,8 +473,8 @@ const showLoginScreen = () => {
     }
     btn.disabled=true; btn.textContent='確認中…';
     try {
-      // Firebase Functions プロキシ経由で kintone 認証確認
-      // 401/520=認証失敗、200/400/403等=認証成功（権限エラーも認証は通っている）
+      // Firebase Functions プロキシ経由で kintone へ接続確認
+      // /k/v1/records.json にlimit=1でアクセス（一般ユーザーが確実に使えるAPI）
       const auth = btoa(`${loginName}:${password}`);
       const proxyUrl = CONFIG.PROXY_BASE_URL + '/kintoneProxy';
 
@@ -494,21 +494,19 @@ const showLoginScreen = () => {
       } catch (networkErr) {
         throw new Error('プロキシサーバーへの接続に失敗しました。PROXY_BASE_URL の設定を確認してください。');
       }
-      // 401/520 = 認証失敗（パスワード間違い）
+      // 401/520=認証失敗、200/400/403=認証成功（権限エラーも認証は通っている）
       if (verifyRes.status === 401 || verifyRes.status === 520) {
         throw new Error('ログイン名またはパスワードが正しくありません');
       }
-      // 5xx（520除く）= プロキシ/サーバーエラー
       if (verifyRes.status >= 502) {
         throw new Error(`プロキシサーバーエラー (${verifyRes.status})`);
       }
-      // 200/400/403 はすべて「認証は通った」とみなしてログイン成功
 
       // ユーザー情報をFirebase /user_directoryから取得
       let code = loginName, name = loginName;
       try {
         if (_db) {
-          // 1) loginNameをエンコードして直接引く（codeがloginNameと同一の場合）
+          // 1) loginNameをエンコードして直接引く
           const encKey = encodeUserCode(loginName);
           const snap = await _db.ref(`/user_directory/${encKey}`).get();
           if (snap.exists()) {
@@ -516,11 +514,10 @@ const showLoginScreen = () => {
             code = u.code || loginName;
             name = u.name || loginName;
           } else {
-            // 2) 見つからない場合は全件スキャンしてloginNameに一致するエントリを探す
+            // 2) 全件スキャンしてloginNameに一致するエントリを探す
             const allSnap = await _db.ref('/user_directory').get();
             if (allSnap.exists()) {
               const users = Object.values(allSnap.val() || {});
-              // code または loginName フィールドで一致するものを探す
               const found = users.find(u =>
                 u.code === loginName ||
                 u.loginName === loginName ||
