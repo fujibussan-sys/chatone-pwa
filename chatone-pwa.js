@@ -60,25 +60,49 @@ const idb = (() => {
   let _db = null;
   const open = () => {
     if (_db) return Promise.resolve(_db);
+    if (!('indexedDB' in window)) return Promise.reject(new Error('IndexedDB is not available'));
     return new Promise((res, rej) => {
-      const req = indexedDB.open('chatone-pwa', 1);
+      let req;
+      try {
+        req = indexedDB.open('chatone-pwa', 1);
+      } catch (e) {
+        rej(e);
+        return;
+      }
       req.onupgradeneeded = e => {
         const db = e.target.result;
         ['settings', 'cache'].forEach(s => {
           if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
         });
       };
-      req.onsuccess = e => { _db = e.target.result; res(_db); };
+      req.onsuccess = e => {
+        _db = e.target.result;
+        _db.onclose = () => { _db = null; };
+        _db.onerror = () => {};
+        _db.onversionchange = () => { try { _db.close(); } catch {} _db = null; };
+        res(_db);
+      };
       req.onerror   = () => rej(req.error);
+      req.onblocked = () => rej(new Error('IndexedDB open blocked'));
     });
   };
   const tx = async (store, mode, fn) => {
     await open();
     return new Promise((res, rej) => {
-      const req = _db.transaction(store, mode).objectStore(store);
-      const r = fn(req);
-      r.onsuccess = () => res(r.result);
-      r.onerror   = () => rej(r.error);
+      let txObj, objectStore, req;
+      try {
+        txObj = _db.transaction(store, mode);
+        objectStore = txObj.objectStore(store);
+        req = fn(objectStore);
+      } catch (e) {
+        _db = null;
+        rej(e);
+        return;
+      }
+      req.onsuccess = () => res(req.result);
+      req.onerror   = () => rej(req.error);
+      txObj.onerror = () => rej(txObj.error || req.error);
+      txObj.onabort = () => rej(txObj.error || new Error('IndexedDB transaction aborted'));
     });
   };
   return {
@@ -95,17 +119,37 @@ const idb = (() => {
  * ============================================================ */
 const authStore = {
   _KEY: 'creds',
+  _LS_KEY: 'chatone-pwa-creds',
   _cache: null,
   async load() {
     try {
       const raw = await idb.get('settings', this._KEY);
+      if (raw) {
+        this._cache = JSON.parse(atob(raw));
+        return this._cache;
+      }
+    } catch (e) { console.warn('[authStore] IndexedDB load failed; trying localStorage', e); }
+    try {
+      const raw = localStorage.getItem(this._LS_KEY);
       if (!raw) return null;
       this._cache = JSON.parse(atob(raw));
       return this._cache;
-    } catch { return null; }
+    } catch (e) {
+      console.warn('[authStore] localStorage load failed', e);
+      return null;
+    }
   },
-  async save(c) { this._cache = c; await idb.set('settings', this._KEY, btoa(JSON.stringify(c))); },
-  async clear() { this._cache = null; await idb.del('settings', this._KEY); },
+  async save(c) {
+    this._cache = c;
+    const raw = btoa(JSON.stringify(c));
+    try { localStorage.setItem(this._LS_KEY, raw); } catch (e) { console.warn('[authStore] localStorage save failed', e); }
+    try { await idb.set('settings', this._KEY, raw); } catch (e) { console.warn('[authStore] IndexedDB save failed', e); }
+  },
+  async clear() {
+    this._cache = null;
+    try { localStorage.removeItem(this._LS_KEY); } catch {}
+    try { await idb.del('settings', this._KEY); } catch (e) { console.warn('[authStore] IndexedDB clear failed', e); }
+  },
   get()       { return this._cache; },
   header()    {
     const c = this._cache;
@@ -334,15 +378,28 @@ const usersFromRoomMembers = async () => {
         .replace(/_dollar_/g,'$').replace(/_hash_/g,'#').replace(/_dot_/g,'.')
         .replace(/_at_/g,'@').replace(/_us_/g,'_');
     };
-    const [roomsSnap, dirSnap] = await Promise.all([
+    const [roomsSnap, dirSnap, messagesSnap] = await Promise.all([
       _fbFn.get(fb.roomsRef()),
       _fbFn.get(_fbFn.ref('user_directory')).catch(() => null),
+      _fbFn.get(_fbFn.ref('messages')).catch(() => null),
     ]);
     const val = roomsSnap.val() || {};
     const dir = dirSnap?.val?.() || {};
+    const allMessages = messagesSnap?.val?.() || {};
     const byCode = {};
     Object.values(dir).forEach(u => {
       if (u?.code) byCode[String(u.code).toLowerCase()] = u;
+    });
+    Object.values(allMessages).forEach(roomMessages => {
+      Object.values(roomMessages || {}).forEach(msg => {
+        const code = msg?.sender;
+        const name = msg?.sender_name;
+        if (!code || !name || code === 'system' || name === 'Chatone') return;
+        const key = String(code).toLowerCase();
+        if (!byCode[key] || byCode[key].name === byCode[key].code) {
+          byCode[key] = { ...(byCode[key] || {}), code, name, email: byCode[key]?.email || '' };
+        }
+      });
     });
     const codes = new Set();
     Object.values(val).forEach(room => {
@@ -352,7 +409,8 @@ const usersFromRoomMembers = async () => {
       const u = byCode[String(code).toLowerCase()];
       return { code, name: u?.name || code, email: u?.email || '' };
     });
-  } catch {
+  } catch (e) {
+    console.warn('[usersFromRoomMembers] fallback user build failed', e);
     return [];
   }
 };
@@ -376,6 +434,23 @@ const resolveUserFromRooms = async loginName => {
     if (byMailPrefix) return byMailPrefix;
   }
   return null;
+};
+
+const displayNameForCode = (code, fallback = '') => {
+  const normalized = String(code || '').toLowerCase();
+  const cached = (api._userCache || []).find(u => String(u.code || '').toLowerCase() === normalized);
+  const cachedName = cached?.name && cached.name !== cached.code ? cached.name : '';
+  const fallbackName = fallback && fallback !== code ? fallback : '';
+  return cachedName || fallbackName || code || '';
+};
+
+const refreshSidebarUser = () => {
+  const uEl = document.getElementById('sidebar-user');
+  if (!uEl || !state.currentUser) return;
+  uEl.innerHTML = `
+    <div class="user-avatar co-avatar-clickable" id="sidebar-my-avatar" title="アイコンを変更">${getInitial(state.currentUser.name)}</div>
+    <span class="user-name">${escapeHTML(state.currentUser.name)}</span>`;
+  document.getElementById('sidebar-my-avatar')?.addEventListener('click', openMyAvatarPicker);
 };
 
 /* ============================================================
@@ -654,31 +729,47 @@ const startApp = async () => {
     state.currentUser = authStore.get();
 
     // サイドバーにユーザー表示
-    const uEl = document.getElementById('sidebar-user');
-    if (uEl) {
-      uEl.innerHTML = `
-        <div class="user-avatar co-avatar-clickable" id="sidebar-my-avatar" title="アイコンを変更">${getInitial(state.currentUser.name)}</div>
-        <span class="user-name">${escapeHTML(state.currentUser.name)}</span>`;
-      document.getElementById('sidebar-my-avatar')?.addEventListener('click', openMyAvatarPicker);
-    }
+    refreshSidebarUser();
 
     // 通知ボタン初期化
     initNotifyButton();
 
-    // ルーム＋ユーザー一覧を並行取得
-    const [,rooms] = await Promise.all([
-      api.searchUsers('').catch(e => console.warn('ユーザー一覧先読み失敗:', e)),
-      fb.getRooms(state.currentUser.code),
-    ]);
+    // 任意のkintoneユーザー取得と必須のルーム取得を分離して、スマホ起動時の巻き添え失敗を防ぐ
+    await api.searchUsers('').catch(e => console.warn('ユーザー一覧先読み失敗:', e));
+    const mine = (api._userCache || []).find(u => String(u.code || '').toLowerCase() === String(state.currentUser.code || '').toLowerCase());
+    if (mine?.name && mine.name !== state.currentUser.name) {
+      state.currentUser = { ...state.currentUser, name: mine.name, email: mine.email || state.currentUser.email };
+      await authStore.save(state.currentUser);
+      refreshSidebarUser();
+    }
+
+    let rooms = [];
+    try {
+      rooms = await fb.getRooms(state.currentUser.code);
+    } catch (e) {
+      console.error('[Chatone PWA] ルーム取得失敗:', e);
+      rooms = [];
+    }
     let effectiveRooms = rooms;
     if (!effectiveRooms.length) {
       const resolved = await resolveUserFromRooms(state.currentUser.loginName || state.currentUser.code);
       if (resolved && resolved.code && resolved.code !== state.currentUser.code) {
         state.currentUser = { ...state.currentUser, code: resolved.code, name: resolved.name || state.currentUser.name };
         await authStore.save(state.currentUser);
-        effectiveRooms = await fb.getRooms(state.currentUser.code);
+        refreshSidebarUser();
+        try {
+          effectiveRooms = await fb.getRooms(state.currentUser.code);
+        } catch (e) {
+          console.error('[Chatone PWA] 解決後のルーム取得失敗:', e);
+          effectiveRooms = [];
+        }
+      } else if (resolved?.name && resolved.name !== state.currentUser.name) {
+        state.currentUser = { ...state.currentUser, name: resolved.name };
+        await authStore.save(state.currentUser);
+        refreshSidebarUser();
       }
     }
+    console.info('[Chatone PWA] rooms loaded', { user: state.currentUser.code, count: effectiveRooms.length });
     state.rooms = {};
     effectiveRooms.forEach(r => { state.rooms[r.id] = r; });
     updateTitleBadge();
@@ -952,6 +1043,7 @@ const renderMessages = (messages) => {
       const u = api._userCache?.find(u=>u.code===code);
       return u?.name || code;
     });
+    const senderDisplayName = displayNameForCode(msg.sender, msg.sender_name);
 
     if (msg.msg_type === 'system') {
       list.insertAdjacentHTML('beforeend', `<div class="msg-system" data-msg-id="${msg.id}">${escapeHTML(msg.body)}</div>`);
@@ -963,8 +1055,8 @@ const renderMessages = (messages) => {
       el.className = 'msg-bubble-wrap theirs'; el.dataset.msgId = msg.id;
       el.innerHTML = `
         <div class="msg-avatar-col">
-          <div class="msg-avatar" data-sender="${escapeHTML(msg.sender)}" data-initial="${escapeHTML(getInitial(msg.sender_name||msg.sender))}">${getInitial(msg.sender_name||msg.sender)}</div>
-          <div class="msg-sender-name">${escapeHTML(msg.sender_name||msg.sender)}</div>
+          <div class="msg-avatar" data-sender="${escapeHTML(msg.sender)}" data-initial="${escapeHTML(getInitial(senderDisplayName))}">${getInitial(senderDisplayName)}</div>
+          <div class="msg-sender-name">${escapeHTML(senderDisplayName)}</div>
         </div>
         <div class="msg-content">
           <div class="msg-bubble-row"><div class="msg-bubble"><div class="msg-text msg-deleted">このメッセージは削除されました</div></div></div>
@@ -995,7 +1087,7 @@ const renderMessages = (messages) => {
 
     if (isStamp) {
       el.innerHTML = `
-        ${!isMine?`<div class="msg-avatar-col"><div class="msg-avatar" data-sender="${escapeHTML(msg.sender)}" data-initial="${escapeHTML(getInitial(msg.sender_name||msg.sender))}">${getInitial(msg.sender_name||msg.sender)}</div><div class="msg-sender-name">${escapeHTML(msg.sender_name||msg.sender)}</div></div>`:''}
+        ${!isMine?`<div class="msg-avatar-col"><div class="msg-avatar" data-sender="${escapeHTML(msg.sender)}" data-initial="${escapeHTML(getInitial(senderDisplayName))}">${getInitial(senderDisplayName)}</div><div class="msg-sender-name">${escapeHTML(senderDisplayName)}</div></div>`:''}
         <div class="msg-content">
           <div class="msg-bubble-row"><div class="msg-bubble"><div class="msg-stamp-wrap"><span class="msg-stamp-loading">⏳</span></div></div></div>
           <div class="msg-meta">${isMine?`<span class="msg-read">${isRead?'既読':''}</span>`:''}<span class="msg-time">${formatDateTime(msg.sent_at)}</span></div>
@@ -1016,7 +1108,7 @@ const renderMessages = (messages) => {
     }
 
     el.innerHTML = `
-      ${!isMine?`<div class="msg-avatar-col"><div class="msg-avatar" data-sender="${escapeHTML(msg.sender)}" data-initial="${escapeHTML(getInitial(msg.sender_name||msg.sender))}">${getInitial(msg.sender_name||msg.sender)}</div><div class="msg-sender-name">${escapeHTML(msg.sender_name||msg.sender)}</div></div>`:''}
+      ${!isMine?`<div class="msg-avatar-col"><div class="msg-avatar" data-sender="${escapeHTML(msg.sender)}" data-initial="${escapeHTML(getInitial(senderDisplayName))}">${getInitial(senderDisplayName)}</div><div class="msg-sender-name">${escapeHTML(senderDisplayName)}</div></div>`:''}
       <div class="msg-content">
         <div class="msg-bubble-row">
           <div class="btn-delete-msg-placeholder"></div>
@@ -1216,7 +1308,8 @@ const sendMessage = async () => {
     }
     const now=Date.now(), ref=fb.messagesRef(roomId).push(), key=ref.key;
     state.pendingMsgKeys.add(key);
-    const msgData = { sender:user.code, sender_name:user.name, body:body||'', msg_type:attachment?(/^image\//i.test(attachment.type||'')?'image':'file'):'text', sent_at:now, read_by:{ [userKey(user.code)]:true }, ...(attachment?{attachment}:{}) };
+    const senderName = displayNameForCode(user.code, user.name);
+    const msgData = { sender:user.code, sender_name:senderName, body:body||'', msg_type:attachment?(/^image\//i.test(attachment.type||'')?'image':'file'):'text', sent_at:now, read_by:{ [userKey(user.code)]:true }, ...(attachment?{attachment}:{}) };
     renderMessages([{ id:key, ...msgData }]);
     document.getElementById('message-list').scrollTop = 99999;
     input.innerHTML=''; state.pendingFiles=[];
@@ -1226,7 +1319,7 @@ const sendMessage = async () => {
     const members=getMemberCodes(state.currentRoom.members);
     const uu={};
     members.forEach(c => { if(c!==user.code) uu[`unread/${userKey(c)}`]=(unreadCount(state.rooms[roomId],c)||0)+1; });
-    await fb.roomRef(roomId).update({ last_message:body||(attachment?`📎 ${attachment.name}`:'(ファイル)'), last_sender_name:user.name, last_sent_at:now, ...uu });
+    await fb.roomRef(roomId).update({ last_message:body||(attachment?`📎 ${attachment.name}`:'(ファイル)'), last_sender_name:senderName, last_sent_at:now, ...uu });
   } catch(e) { showToast('送信に失敗しました','error'); console.error(e); }
   finally { btn.disabled=false; btn.classList.remove('sending'); }
 };
@@ -1238,14 +1331,15 @@ const sendStamp = async (stampId) => {
   if (!state.currentRoom) return;
   const roomId=state.currentRoom.id, user=state.currentUser, now=Date.now();
   const ref=fb.messagesRef(roomId).push(); state.pendingMsgKeys.add(ref.key);
-  const msgData={ sender:user.code, sender_name:user.name, body:stampId, msg_type:'stamp', sent_at:now, read_by:{ [userKey(user.code)]:true } };
+  const senderName = displayNameForCode(user.code, user.name);
+  const msgData={ sender:user.code, sender_name:senderName, body:stampId, msg_type:'stamp', sent_at:now, read_by:{ [userKey(user.code)]:true } };
   renderMessages([{ id:ref.key, ...msgData }]);
   document.getElementById('message-list').scrollTop=99999;
   try {
     await ref.set(msgData);
     const uu={};
     getMemberCodes(state.currentRoom.members).forEach(c=>{ if(c!==user.code) uu[`unread/${userKey(c)}`]=(unreadCount(state.rooms[roomId],c)||0)+1; });
-    await fb.roomRef(roomId).update({ last_message:'(スタンプ)', last_sender_name:user.name, last_sent_at:now, ...uu });
+    await fb.roomRef(roomId).update({ last_message:'(スタンプ)', last_sender_name:senderName, last_sent_at:now, ...uu });
   } catch(e) { showToast('スタンプの送信に失敗しました','error'); }
 };
 
@@ -1830,6 +1924,25 @@ const bindEvents = () => {
 /* ============================================================
  *  エントリーポイント
  * ============================================================ */
+window.addEventListener('error', e => {
+  console.error('[Chatone PWA] window error:', {
+    message: e.message,
+    filename: e.filename,
+    lineno: e.lineno,
+    colno: e.colno,
+    error: e.error,
+    stack: e.error?.stack,
+  });
+});
+
+window.addEventListener('unhandledrejection', e => {
+  console.error('[Chatone PWA] unhandled rejection:', {
+    reason: e.reason,
+    message: e.reason?.message,
+    stack: e.reason?.stack,
+  });
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
   await idb.open().catch(()=>{});
   await registerSW();
