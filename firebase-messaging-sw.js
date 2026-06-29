@@ -7,14 +7,14 @@
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
 
-const CACHE_NAME = 'chatone-pwa-v16';
+const CACHE_NAME = 'chatone-pwa-v17';
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './chatone-pwa.js',
   './chatone-pwa.css',
-  './chatone-pwa-hotfix.js?v=20260629-4',
+  './chatone-pwa-hotfix.js?v=20260629-5',
   './icons/icon-192.png',
   './icons/icon-512.png',
 ];
@@ -83,8 +83,8 @@ self.addEventListener('fetch', event => {
 });
 
 messaging.onBackgroundMessage(payload => {
-  const title = payload.notification?.title || payload.data?.title || 'Chatone';
-  const body = payload.notification?.body || payload.data?.body || '';
+  const title = payload.data?.title || payload.notification?.title || 'Chatone';
+  const body = payload.data?.body || payload.notification?.body || '';
   const roomId = payload.data?.roomId || '';
   const icon = assetUrl('./icons/icon-192.png');
   const badge = assetUrl('./icons/icon-72.png');
@@ -112,10 +112,11 @@ self.addEventListener('notificationclick', event => {
   const roomId = event.notification.data?.roomId;
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async clientList => {
       for (const client of clientList) {
         if ('focus' in client) {
-          client.focus();
+          if ('navigate' in client) await client.navigate(url).catch(() => null);
+          await client.focus();
           if (roomId) client.postMessage({ type: 'open-room', roomId });
           return;
         }
