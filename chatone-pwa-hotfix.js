@@ -54,8 +54,13 @@
   }
 
   const patchFirebaseRef = () => {
-    if (!window.firebase?.database) return false;
-    const sampleRef = firebase.database().ref('/');
+    if (!window.firebase?.database || !firebase.apps?.length) return false;
+    let sampleRef;
+    try {
+      sampleRef = firebase.database().ref('/');
+    } catch {
+      return false;
+    }
     const refProto = Object.getPrototypeOf(sampleRef);
     if (!refProto || refProto.__chatoneHotfixPatched) return true;
 
@@ -75,7 +80,11 @@
     return true;
   };
 
-  if (!patchFirebaseRef()) {
-    window.addEventListener('load', patchFirebaseRef, { once: true });
-  }
+  let tries = 0;
+  const waitForFirebase = () => {
+    if (patchFirebaseRef()) return;
+    tries += 1;
+    if (tries < 80) setTimeout(waitForFirebase, 250);
+  };
+  waitForFirebase();
 })();
