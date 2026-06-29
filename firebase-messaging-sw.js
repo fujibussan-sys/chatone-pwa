@@ -1,14 +1,25 @@
 /* =====================================================
- *  firebase-messaging-sw.js
- *  FCM バックグラウンド通知受信 Service Worker
- *  ⚠️ このファイルは必ず public/ のルートに置いてください
+ *  Chatone unified Service Worker
+ *  - FCM background notifications
+ *  - PWA app-shell cache
  * ===================================================== */
 
-// Firebase SDK を importScripts で読み込む（compat 版）
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
 
-// ── ここに Firebase 設定を入力してください ──────────────
+const CACHE_NAME = 'chatone-pwa-v13';
+const ASSETS = [
+  './',
+  './index.html',
+  './manifest.json',
+  './chatone-pwa.js',
+  './chatone-pwa.css',
+  './chatone-pwa-hotfix.js',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+];
+const assetUrl = path => new URL(path, self.registration.scope).toString();
+
 firebase.initializeApp({
   apiKey:            'AIzaSyBlTJjF_fOYLpEQTsxt_X18s-A_4FGV-9U',
   authDomain:        'chatone-fujibussan.firebaseapp.com',
@@ -21,19 +32,71 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// バックグラウンド受信 → OS通知を表示
-messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || 'Chatone';
-  const body  = payload.notification?.body  || '';
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => Promise.allSettled(ASSETS.map(path => cache.add(assetUrl(path)))))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+  if (
+    url.hostname.includes('firebasedatabase.app') ||
+    url.hostname.includes('googleapis.com') ||
+    url.hostname.includes('cybozu.com') ||
+    url.hostname.includes('dropboxapi.com') ||
+    url.hostname.includes('gstatic.com') ||
+    url.hostname.includes('a.run.app')
+  ) {
+    return;
+  }
+
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(assetUrl('./index.html')))
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(event.request).then(cached => {
+      if (cached) return cached;
+      return fetch(event.request).then(res => {
+        if (res && res.status === 200 && res.type === 'basic') {
+          const clone = res.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+        }
+        return res;
+      });
+    })
+  );
+});
+
+messaging.onBackgroundMessage(payload => {
+  const title = payload.notification?.title || payload.data?.title || 'Chatone';
+  const body = payload.notification?.body || payload.data?.body || '';
   const roomId = payload.data?.roomId || '';
+  const icon = assetUrl('./icons/icon-192.png');
+  const badge = assetUrl('./icons/icon-72.png');
+  const url = roomId ? assetUrl(`./?room=${encodeURIComponent(roomId)}`) : assetUrl('./');
 
   self.registration.showNotification(title, {
     body,
-    icon:  '/icons/icon-192.png',
-    badge: '/icons/icon-72.png',
-    tag:   roomId || 'chatone-msg',   // 同じルームの通知は積み重ねず上書き
+    icon,
+    badge,
+    tag: roomId || 'chatone-msg',
     renotify: true,
-    data:  { roomId, url: roomId ? `/?room=${roomId}` : '/' },
+    data: { roomId, url },
     actions: [
       { action: 'open', title: '開く' },
       { action: 'dismiss', title: '閉じる' },
@@ -41,31 +104,27 @@ messaging.onBackgroundMessage((payload) => {
   });
 });
 
-// 通知クリック → 対象ルームを開く
-self.addEventListener('notificationclick', (event) => {
+self.addEventListener('notificationclick', event => {
   event.notification.close();
-
   if (event.action === 'dismiss') return;
 
-  const url   = event.notification.data?.url || '/';
+  const url = event.notification.data?.url || assetUrl('./');
   const roomId = event.notification.data?.roomId;
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // すでに開いているウィンドウがあればフォーカスしてメッセージを送る
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
       for (const client of clientList) {
         if ('focus' in client) {
           client.focus();
-          if (roomId) {
-            client.postMessage({ type: 'open-room', roomId });
-          }
+          if (roomId) client.postMessage({ type: 'open-room', roomId });
           return;
         }
       }
-      // なければ新規タブで開く
-      if (clients.openWindow) {
-        return clients.openWindow(url);
-      }
+      if (clients.openWindow) return clients.openWindow(url);
     })
   );
+});
+
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
