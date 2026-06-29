@@ -41,15 +41,21 @@
 
   if ('serviceWorker' in navigator) {
     const nativeRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
+    let lastRegistration = null;
     navigator.serviceWorker.register = (scriptURL, options = {}) => {
       const url = String(scriptURL || '');
       if (url.endsWith('/sw.js') || url.endsWith('sw.js')) {
-        const scope = options.scope || new URL('./', document.baseURI).pathname;
         log('skip legacy sw.js registration');
-        return navigator.serviceWorker.getRegistration(scope)
-          .then(reg => reg || navigator.serviceWorker.ready);
+        return Promise.resolve(lastRegistration || {
+          scope: options.scope || new URL('./', document.baseURI).href,
+          update: () => Promise.resolve(),
+          unregister: () => Promise.resolve(false),
+        });
       }
-      return nativeRegister(scriptURL, options);
+      return nativeRegister(scriptURL, options).then(reg => {
+        lastRegistration = reg;
+        return reg;
+      });
     };
   }
 
