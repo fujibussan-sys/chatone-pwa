@@ -7,14 +7,14 @@
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
 
-const CACHE_NAME = 'chatone-pwa-v15';
+const CACHE_NAME = 'chatone-pwa-v16';
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './chatone-pwa.js',
   './chatone-pwa.css',
-  './chatone-pwa-hotfix.js?v=20260629-3',
+  './chatone-pwa-hotfix.js?v=20260629-4',
   './icons/icon-192.png',
   './icons/icon-512.png',
 ];
