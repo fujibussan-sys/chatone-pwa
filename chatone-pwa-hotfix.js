@@ -1,6 +1,7 @@
 /* Chatone PWA runtime hotfixes
- * - Prevent sw.js from replacing the FCM service worker.
+ * - Prevent only legacy sw.js from replacing the FCM service worker.
  * - Store FCM tokens per device when the older main script writes the legacy path.
+ * - Repair old IndexedDB instances that are missing required object stores.
  * - Clear stale stamp blob URLs saved in IndexedDB by older builds.
  */
 'use strict';
@@ -18,33 +19,66 @@
     .replace(/\[/g, '_lb_')
     .replace(/\]/g, '_rb_');
 
-  const clearStampCache = () => {
+  const repairIndexedDB = () => {
     if (!('indexedDB' in window)) return;
     const req = indexedDB.open('chatone-pwa', 1);
+    req.onupgradeneeded = event => {
+      const db = event.target.result;
+      ['settings', 'cache'].forEach(store => {
+        if (!db.objectStoreNames.contains(store)) db.createObjectStore(store);
+      });
+    };
     req.onsuccess = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains('cache')) {
+      const hasSettings = db.objectStoreNames.contains('settings');
+      const hasCache = db.objectStoreNames.contains('cache');
+      if (!hasSettings || !hasCache) {
         db.close();
+        if (sessionStorage.getItem('chatone-idb-repairing') === '1') return;
+        sessionStorage.setItem('chatone-idb-repairing', '1');
+        const del = indexedDB.deleteDatabase('chatone-pwa');
+        del.onsuccess = () => {
+          log('IndexedDB repaired, reloading');
+          location.reload();
+        };
+        del.onerror = () => {
+          sessionStorage.removeItem('chatone-idb-repairing');
+          log('IndexedDB repair failed');
+        };
+        del.onblocked = () => {
+          log('IndexedDB repair blocked; please close other Chatone tabs');
+        };
         return;
       }
-      const tx = db.transaction('cache', 'readwrite');
-      const store = tx.objectStore('cache');
-      store.delete('stamps');
-      store.delete('stamps-v2');
-      tx.oncomplete = () => { db.close(); log('stamp cache cleared'); };
-      tx.onerror = () => db.close();
-      tx.onabort = () => db.close();
+
+      sessionStorage.removeItem('chatone-idb-repairing');
+      try {
+        const tx = db.transaction('cache', 'readwrite');
+        const store = tx.objectStore('cache');
+        store.delete('stamps');
+        store.delete('stamps-v2');
+        tx.oncomplete = () => { db.close(); log('stamp cache cleared'); };
+        tx.onerror = () => db.close();
+        tx.onabort = () => db.close();
+      } catch {
+        db.close();
+      }
     };
   };
 
-  clearStampCache();
+  repairIndexedDB();
 
   if ('serviceWorker' in navigator) {
     const nativeRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
     let lastRegistration = null;
     navigator.serviceWorker.register = (scriptURL, options = {}) => {
-      const url = String(scriptURL || '');
-      if (url.endsWith('/sw.js') || url.endsWith('sw.js')) {
+      let pathname = '';
+      try {
+        pathname = new URL(String(scriptURL || ''), document.baseURI).pathname;
+      } catch {
+        pathname = String(scriptURL || '');
+      }
+      if (pathname.endsWith('/sw.js') && !pathname.endsWith('/firebase-messaging-sw.js')) {
         log('skip legacy sw.js registration');
         return Promise.resolve(lastRegistration || {
           scope: options.scope || new URL('./', document.baseURI).href,
