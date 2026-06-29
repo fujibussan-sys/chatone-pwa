@@ -3,6 +3,7 @@
  * - Store FCM tokens per device when the older main script writes the legacy path.
  * - Repair old IndexedDB instances that are missing required object stores.
  * - Clear stale stamp blob URLs saved in IndexedDB by older builds.
+ * - Open ?room=... links created by push notifications.
  */
 'use strict';
 
@@ -66,7 +67,28 @@
     };
   };
 
+  const openRequestedRoom = roomId => {
+    if (!roomId) return;
+    let tries = 0;
+    const tryOpen = () => {
+      const item = document.querySelector(`.room-item[data-room-id="${CSS.escape(roomId)}"]`);
+      if (item) {
+        item.click();
+        history.replaceState(null, '', new URL('./', location.href));
+        log('opened room from notification', roomId);
+        return;
+      }
+      tries += 1;
+      if (tries < 80) setTimeout(tryOpen, 250);
+    };
+    tryOpen();
+  };
+
   repairIndexedDB();
+  openRequestedRoom(new URL(location.href).searchParams.get('room'));
+  navigator.serviceWorker?.addEventListener?.('message', event => {
+    if (event.data?.type === 'open-room' && event.data.roomId) openRequestedRoom(event.data.roomId);
+  });
 
   if ('serviceWorker' in navigator) {
     const nativeRegister = navigator.serviceWorker.register.bind(navigator.serviceWorker);
