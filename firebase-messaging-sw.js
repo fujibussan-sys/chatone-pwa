@@ -7,14 +7,14 @@
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
 
-const CACHE_NAME = 'chatone-pwa-v17';
+const CACHE_NAME = 'chatone-pwa-v18';
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './chatone-pwa.js',
   './chatone-pwa.css',
-  './chatone-pwa-hotfix.js?v=20260629-5',
+  './chatone-pwa-hotfix.js?v=20260712-1',
   './icons/icon-192.png',
   './icons/icon-512.png',
 ];
@@ -31,6 +31,23 @@ firebase.initializeApp({
 });
 
 const messaging = firebase.messaging();
+
+const collapseDuplicateTitle = title => {
+  const clean = String(title || '').replace(/\s+/g, ' ').trim();
+  const parts = clean.split(' ').filter(Boolean);
+  if (parts.length === 2 && parts[0] === parts[1]) return parts[0];
+  return clean || 'Chatone';
+};
+
+const updateAppBadgeFromPayload = payload => {
+  const raw = payload.data?.unreadCount || payload.data?.badgeCount || payload.data?.badge;
+  const count = Number(raw);
+  if (!Number.isFinite(count)) return;
+  try {
+    if (count > 0 && self.registration.setAppBadge) self.registration.setAppBadge(count);
+    else if (self.registration.clearAppBadge) self.registration.clearAppBadge();
+  } catch {}
+};
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -83,12 +100,17 @@ self.addEventListener('fetch', event => {
 });
 
 messaging.onBackgroundMessage(payload => {
-  const title = payload.data?.title || payload.notification?.title || 'Chatone';
+  const senderName = payload.data?.senderName || payload.data?.sender_name || '';
+  const isDm = payload.data?.isDm === 'true' || payload.data?.is_dm === 'true';
+  const rawTitle = payload.data?.title || payload.notification?.title || 'Chatone';
+  const title = isDm && senderName ? senderName : collapseDuplicateTitle(rawTitle);
   const body = payload.data?.body || payload.notification?.body || '';
   const roomId = payload.data?.roomId || '';
   const icon = assetUrl('./icons/icon-192.png');
   const badge = assetUrl('./icons/icon-72.png');
   const url = roomId ? assetUrl(`./?room=${encodeURIComponent(roomId)}`) : assetUrl('./');
+
+  updateAppBadgeFromPayload(payload);
 
   self.registration.showNotification(title, {
     body,
