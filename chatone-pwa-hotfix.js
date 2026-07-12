@@ -4,6 +4,7 @@
  * - Repair old IndexedDB instances that are missing required object stores.
  * - Clear stale stamp blob URLs saved in IndexedDB by older builds.
  * - Open ?room=... links created by push notifications.
+ * - Normalize foreground/background notification titles and sync app badges.
  */
 'use strict';
 
@@ -19,6 +20,55 @@
     .replace(/\//g, '_slash_')
     .replace(/\[/g, '_lb_')
     .replace(/\]/g, '_rb_');
+
+  const collapseDuplicateTitle = title => {
+    const clean = String(title || '').replace(/\s+/g, ' ').trim();
+    const parts = clean.split(' ').filter(Boolean);
+    if (parts.length === 2 && parts[0] === parts[1]) return parts[0];
+    return clean || 'Chatone';
+  };
+
+  const normalizePayloadTitle = payload => {
+    const data = payload?.data || {};
+    const senderName = data.senderName || data.sender_name || '';
+    const isDm = data.isDm === 'true' || data.is_dm === 'true';
+    const rawTitle = data.title || payload?.notification?.title || 'Chatone';
+    return isDm && senderName ? senderName : collapseDuplicateTitle(rawTitle);
+  };
+
+  const withNormalizedPayload = payload => {
+    const title = normalizePayloadTitle(payload);
+    return {
+      ...payload,
+      notification: { ...(payload?.notification || {}), title },
+      data: { ...(payload?.data || {}), title },
+    };
+  };
+
+  const syncBadgeFromTitle = () => {
+    if (!('setAppBadge' in navigator) && !('clearAppBadge' in navigator)) return;
+    const match = /^\((\d+)\)\s+Chatone/.exec(document.title || '');
+    const count = match ? Number(match[1]) : 0;
+    try {
+      if (count > 0 && 'setAppBadge' in navigator) navigator.setAppBadge(count).catch?.(() => {});
+      else if ('clearAppBadge' in navigator) navigator.clearAppBadge().catch?.(() => {});
+    } catch {}
+  };
+
+  const patchNotificationConstructor = () => {
+    if (!('Notification' in window) || window.Notification.__chatoneHotfixPatched) return;
+    const NativeNotification = window.Notification;
+    function ChatoneNotification(title, options) {
+      return new NativeNotification(collapseDuplicateTitle(title), options);
+    }
+    Object.setPrototypeOf(ChatoneNotification, NativeNotification);
+    ChatoneNotification.prototype = NativeNotification.prototype;
+    Object.defineProperty(ChatoneNotification, 'permission', { get: () => NativeNotification.permission });
+    ChatoneNotification.requestPermission = NativeNotification.requestPermission.bind(NativeNotification);
+    ChatoneNotification.__chatoneHotfixPatched = true;
+    window.Notification = ChatoneNotification;
+    log('notification title normalizer patched');
+  };
 
   const repairIndexedDB = () => {
     if (!('indexedDB' in window)) return;
@@ -85,6 +135,9 @@
   };
 
   repairIndexedDB();
+  patchNotificationConstructor();
+  syncBadgeFromTitle();
+  setInterval(syncBadgeFromTitle, 2000);
   openRequestedRoom(new URL(location.href).searchParams.get('room'));
   navigator.serviceWorker?.addEventListener?.('message', event => {
     if (event.data?.type === 'open-room' && event.data.roomId) openRequestedRoom(event.data.roomId);
@@ -115,6 +168,25 @@
     };
   }
 
+  const patchMessagingOnMessage = () => {
+    if (!window.firebase?.messaging || !firebase.apps?.length) return false;
+    let messaging;
+    try {
+      messaging = firebase.messaging();
+    } catch {
+      return false;
+    }
+    const proto = Object.getPrototypeOf(messaging);
+    if (!proto || proto.__chatoneOnMessagePatched) return true;
+    const nativeOnMessage = proto.onMessage;
+    proto.onMessage = function(callback) {
+      return nativeOnMessage.call(this, payload => callback(withNormalizedPayload(payload)));
+    };
+    proto.__chatoneOnMessagePatched = true;
+    log('foreground notification payload patched');
+    return true;
+  };
+
   const patchFirebaseRef = () => {
     if (!window.firebase?.database || !firebase.apps?.length) return false;
     let sampleRef;
@@ -144,7 +216,9 @@
 
   let tries = 0;
   const waitForFirebase = () => {
-    if (patchFirebaseRef()) return;
+    const refDone = patchFirebaseRef();
+    const msgDone = patchMessagingOnMessage();
+    if (refDone && msgDone) return;
     tries += 1;
     if (tries < 80) setTimeout(waitForFirebase, 250);
   };
