@@ -1405,6 +1405,10 @@ const updateTitleBadge = () => {
   const user=state.currentUser; if(!user) return;
   state.totalUnread = Object.values(state.rooms).reduce((s,r)=>s+unreadCount(r,user.code),0);
   document.title = state.totalUnread>0 ? `(${state.totalUnread}) Chatone` : 'Chatone';
+  if ('setAppBadge' in navigator) {
+    if (state.totalUnread > 0) navigator.setAppBadge(state.totalUnread).catch(()=>{});
+    else navigator.clearAppBadge().catch(()=>{});
+  }
 };
 
 /* ============================================================
