@@ -79,8 +79,26 @@ exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
       kb.message = kb.error || kb.errors || `kintone error ${status}`;
     }
     if (status >= 400) {
-      // 診断用: kintone側が実際に何を理由に拒否しているか記録する（原因調査後に削除予定）
       console.warn('[kintoneProxy] kintone rejected request', { subdomain, fullPath, method, status, kb });
+      // 診断用: records.json のGETが失敗した場合、原因切り分けのため類似パターンを
+      // 追加で試して結果を比較する（原因調査後に削除予定・クライアントへの応答には影響しない）。
+      if (method === 'GET' && path === '/k/v1/records.json' && params?.app) {
+        const variants = {
+          appOnly: `/k/v1/records.json?app=${encodeURIComponent(params.app)}`,
+          simpleLimit: `/k/v1/records.json?app=${encodeURIComponent(params.app)}&query=${encodeURIComponent('limit 10')}`,
+          orderOnly: `/k/v1/records.json?app=${encodeURIComponent(params.app)}&query=${encodeURIComponent('order by $id asc')}`,
+        };
+        const results = {};
+        for (const [name, p] of Object.entries(variants)) {
+          try {
+            const r = await kintoneRequest(subdomain, p, 'GET', auth, null);
+            results[name] = { status: r.status, kb: r.body };
+          } catch (e) {
+            results[name] = { error: e.message };
+          }
+        }
+        console.warn('[kintoneProxy] diagnostic variants', { app: params.app, results });
+      }
     }
     res.status(status).json(kb);
   } catch (err) {
