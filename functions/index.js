@@ -204,16 +204,16 @@ exports.onNewMessage = onValueCreated(
 
     await admin.messaging().sendEachForMulticast({
       tokens,
-      notification: { title: `${roomName}  ${msg.sender_name || msg.sender}`, body },
-      data: { roomId },
+      // notificationフィールドを付けるとブラウザが自動表示してしまい、
+      // アプリ側のonBackgroundMessage(バッジ更新処理を含む)が実行されないため
+      // データのみのメッセージにして表示を完全にクライアント側に委ねる。
+      data: {
+        title: `${roomName}  ${msg.sender_name || msg.sender}`,
+        body,
+        roomId,
+      },
       webpush: {
-        notification: {
-          icon: '/icons/icon-192.png',
-          badge: '/icons/icon-72.png',
-          tag: roomId,
-          renotify: 'true',
-        },
-        fcmOptions: { link: `https://fujibussan-sys.github.io/?room=${roomId}` },
+        fcmOptions: { link: `https://fujibussan-sys.github.io/chatone-pwa/?room=${roomId}` },
       },
       android: { notification: { sound: 'default', channelId: 'chatone' } },
       apns:    { payload: { aps: { sound: 'default', badge: 1 } } },
