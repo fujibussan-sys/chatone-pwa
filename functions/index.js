@@ -80,20 +80,6 @@ exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
     }
     if (status >= 400) {
       console.warn('[kintoneProxy] kintone rejected request', { subdomain, fullPath, method, status, kb });
-      // 診断用: records.json のGETが失敗した場合、原因切り分けのため類似パターンを
-      // 追加で試して結果を比較する（原因調査後に削除予定・クライアントへの応答には影響しない）。
-      if (method === 'GET' && path === '/k/v1/records.json' && params?.app) {
-        try {
-          const r = await kintoneRequest(subdomain, '/k/v1/apps.json?limit=100', 'GET', auth, null);
-          const apps = (r.body?.apps || []).map(a => ({ appId: a.appId, code: a.code, name: a.name }));
-          const target = apps.find(a => String(a.appId) === String(params.app));
-          console.warn('[kintoneProxy] full app list status=' + r.status + ' count=' + apps.length
-            + ' target(' + params.app + ')=' + JSON.stringify(target || null)
-            + ' all=' + JSON.stringify(apps));
-        } catch (e) {
-          console.warn('[kintoneProxy] full app list fetch failed', e.message);
-        }
-      }
     }
     res.status(status).json(kb);
   } catch (err) {
