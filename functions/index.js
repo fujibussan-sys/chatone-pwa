@@ -14,6 +14,17 @@ admin.initializeApp();
 // デフォルトリージョンを東京に設定
 setGlobalOptions({ region: 'asia-northeast1' });
 
+// このプロキシが任意のcybozu.comテナントへの踏み台にされないよう、
+// 対象サブドメインを固定する。
+const ALLOWED_SUBDOMAIN = 'fujibussan';
+const checkSubdomain = (subdomain, res) => {
+  if (subdomain !== ALLOWED_SUBDOMAIN) {
+    res.status(403).json({ error: '許可されていないサブドメインです' });
+    return false;
+  }
+  return true;
+};
+
 /* ============================================================
  *  kintone への HTTPS リクエスト共通関数
  * ============================================================ */
@@ -58,6 +69,7 @@ exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
   if (!subdomain || !auth || !path) {
     res.status(400).json({ error: 'subdomain, auth, path は必須です' }); return;
   }
+  if (!checkSubdomain(subdomain, res)) return;
 
   // params をクエリストリングに変換
   // URLSearchParams はスペースを "+" にエンコードするが、kintoneのquery構文は
@@ -102,6 +114,7 @@ exports.kintoneFileUpload = onRequest(
     if (!subdomain || !auth || !filename || !dataBase64) {
       res.status(400).json({ error: 'subdomain, auth, filename, dataBase64 は必須です' }); return;
     }
+    if (!checkSubdomain(subdomain, res)) return;
 
     const fileBuffer = Buffer.from(dataBase64, 'base64');
     const boundary   = `----FormBoundary${Date.now().toString(16)}`;
@@ -155,6 +168,7 @@ exports.kintoneFileDownload = onRequest(
     if (!subdomain || !auth || !fileKey) {
       res.status(400).json({ error: 'subdomain, auth, fileKey は必須です' }); return;
     }
+    if (!checkSubdomain(subdomain, res)) return;
 
     const options = {
       hostname: `${subdomain}.cybozu.com`,
@@ -184,6 +198,47 @@ exports.kintoneFileDownload = onRequest(
     }
   }
 );
+
+/* ============================================================
+ *  kintone認証 → Firebaseカスタムトークン発行
+ *  RTDBへの匿名フルアクセスを防ぐため、kintoneログインを検証できた
+ *  ユーザーにだけ Firebase Authentication のカスタムトークンを発行する。
+ * ============================================================ */
+exports.kintoneAuth = onRequest({ cors: true }, async (req, res) => {
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  if (req.method !== 'POST')   { res.status(405).send('Method Not Allowed'); return; }
+
+  const { subdomain, auth } = req.body || {};
+  if (!subdomain || !auth) {
+    res.status(400).json({ error: 'subdomain, auth は必須です' }); return;
+  }
+  if (!checkSubdomain(subdomain, res)) return;
+
+  let loginName;
+  try {
+    loginName = Buffer.from(auth, 'base64').toString('utf8').split(':')[0];
+  } catch {
+    loginName = '';
+  }
+  if (!loginName) {
+    res.status(400).json({ error: '認証情報の形式が不正です' }); return;
+  }
+
+  try {
+    const { status, body: kb } = await kintoneRequest(subdomain, '/k/v1/apps.json?limit=1', 'GET', auth, null);
+    if (status === 401 || status === 520) {
+      res.status(401).json({ error: 'ログイン名またはパスワードが正しくありません' }); return;
+    }
+    if (status >= 400) {
+      res.status(status).json({ error: kb?.message || kb?.error || `kintone error ${status}` }); return;
+    }
+    const uid = 'kintone:' + loginName;
+    const token = await admin.auth().createCustomToken(uid, { subdomain, loginName });
+    res.status(200).json({ token });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 /* ============================================================
  *  FCM プッシュ通知（新着メッセージ → 全メンバーに送信）

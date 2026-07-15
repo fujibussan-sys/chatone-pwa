@@ -23,6 +23,7 @@ const CONFIG = {
     kintoneProxy:        'https://kintoneproxy-63pf5chkva-an.a.run.app',
     kintoneFileUpload:   'https://kintonefileupload-63pf5chkva-an.a.run.app',
     kintoneFileDownload: 'https://kintonefiledownload-63pf5chkva-an.a.run.app',
+    kintoneAuth:         'https://kintoneauth-63pf5chkva-an.a.run.app',
   },
 
   FIREBASE: {
@@ -379,7 +380,26 @@ const initFirebase = async () => {
     onChildAdded: (r,cb) => { r.on('child_added',cb); return ()=>r.off('child_added',cb); },
     serverTimestamp: () => firebase.database.ServerValue.TIMESTAMP,
   };
-  if (!_auth.currentUser) await _auth.signInAnonymously();
+  if (!_auth.currentUser) {
+    // 匿名サインインはRTDBセキュリティルール上「誰でもフルアクセス可能」になってしまうため、
+    // kintoneログインを検証したうえで発行されるカスタムトークンでサインインする。
+    const creds = authStore.get();
+    if (!creds?.subdomain || !creds?.loginName || !creds?.password) {
+      throw new Error('ログイン情報が見つかりません');
+    }
+    const authHeader = btoa(`${creds.loginName}:${creds.password}`);
+    const r = await fetch(CONFIG.PROXY_ENDPOINTS.kintoneAuth, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subdomain: creds.subdomain, auth: authHeader }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      throw new Error(e.error || `Firebase認証に失敗しました (${r.status})`);
+    }
+    const { token } = await r.json();
+    await _auth.signInWithCustomToken(token);
+  }
 };
 
 /* ============================================================
