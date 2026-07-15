@@ -51,8 +51,15 @@ exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
   if (req.method !== 'POST')   { res.status(405).send('Method Not Allowed'); return; }
 
-  const { subdomain, auth, path, method = 'GET', params = {}, body } = req.body;
+  const { subdomain, auth, path, method = 'GET', params = {}, body } = req.body || {};
   if (!subdomain || !auth || !path) {
+    // 診断用: 値は出さずどの項目が欠けているかだけ記録する（原因調査後に削除予定）
+    console.warn('[kintoneProxy] missing field', {
+      hasSubdomain: !!subdomain, hasAuth: !!auth, hasPath: !!path,
+      bodyType: typeof req.body, bodyKeys: req.body ? Object.keys(req.body) : null,
+      contentType: req.headers['content-type'] || null,
+      path,
+    });
     res.status(400).json({ error: 'subdomain, auth, path は必須です' }); return;
   }
 
