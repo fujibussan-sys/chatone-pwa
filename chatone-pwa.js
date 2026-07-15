@@ -1279,7 +1279,8 @@ const selectRoom = async (room) => {
     markAsRead([m], room.id);
     if (msg.sender!==state.currentUser.code && !isNightMode()) {
       const dn2=getRoomDisplayName(state.currentRoom,state.currentUser.code);
-      showBrowserNotification(`${dn2} ${msg.sender_name||msg.sender}`, msg.body||(msg.msg_type==='stamp'?'(スタンプ)':'(ファイル)'), room.id);
+      const title2 = state.currentRoom.is_dm ? dn2 : `${dn2} ${msg.sender_name||msg.sender}`;
+      showBrowserNotification(title2, msg.body||(msg.msg_type==='stamp'?'(スタンプ)':'(ファイル)'), room.id);
     }
   };
   ref.on('child_added', cb);
@@ -1300,7 +1301,9 @@ const attachRoomsListener = () => {
       const prevU = prev[id] ? unreadCount(prev[id],user.code) : 0;
       const nowU  = unreadCount(room,user.code);
       if (nowU>prevU && state.currentRoom?.id!==id) {
-        showBrowserNotification(`${getRoomDisplayName({id,...room},user.code)} ${room.last_sender_name||''}`, room.last_message||'新しいメッセージ', id);
+        const dn3 = getRoomDisplayName({id,...room},user.code);
+        const title3 = room.is_dm ? dn3 : `${dn3} ${room.last_sender_name||''}`;
+        showBrowserNotification(title3, room.last_message||'新しいメッセージ', id);
       }
     });
     state._prevRooms = JSON.parse(JSON.stringify(val));
