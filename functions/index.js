@@ -57,6 +57,9 @@ exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
   }
 
   // params をクエリストリングに変換
+  // URLSearchParams はスペースを "+" にエンコードするが、kintoneのquery構文は
+  // "+" を正しく空白として解釈せず CB_IL02(不正なリクエスト) になることがあるため
+  // "%20" エンコードになるよう変換する。
   let fullPath = path;
   if (method === 'GET' && Object.keys(params).length > 0) {
     const qs = new URLSearchParams();
@@ -64,7 +67,7 @@ exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
       if (Array.isArray(v)) v.forEach(i => qs.append(k, i));
       else if (v != null) qs.append(k, String(v));
     });
-    fullPath = `${path}?${qs.toString()}`;
+    fullPath = `${path}?${qs.toString().replace(/\+/g, '%20')}`;
   }
 
   try {
