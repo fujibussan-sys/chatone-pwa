@@ -53,13 +53,6 @@ exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
 
   const { subdomain, auth, path, method = 'GET', params = {}, body } = req.body || {};
   if (!subdomain || !auth || !path) {
-    // 診断用: 値は出さずどの項目が欠けているかだけ記録する（原因調査後に削除予定）
-    console.warn('[kintoneProxy] missing field', {
-      hasSubdomain: !!subdomain, hasAuth: !!auth, hasPath: !!path,
-      bodyType: typeof req.body, bodyKeys: req.body ? Object.keys(req.body) : null,
-      contentType: req.headers['content-type'] || null,
-      path,
-    });
     res.status(400).json({ error: 'subdomain, auth, path は必須です' }); return;
   }
 
@@ -81,6 +74,10 @@ exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
     // kintone エラーレスポンスをそのまま返す（クライアント側で message フィールドを使用）
     if (status >= 400 && typeof kb === 'object' && !kb.message) {
       kb.message = kb.error || kb.errors || `kintone error ${status}`;
+    }
+    if (status >= 400) {
+      // 診断用: kintone側が実際に何を理由に拒否しているか記録する（原因調査後に削除予定）
+      console.warn('[kintoneProxy] kintone rejected request', { subdomain, fullPath, method, status, kb });
     }
     res.status(status).json(kb);
   } catch (err) {
