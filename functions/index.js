@@ -221,6 +221,9 @@ exports.onNewMessage = onValueCreated(
     if (!tokens.length) return null;
 
     const roomName = room.room_name || 'Chatone';
+    const senderName = msg.sender_name || msg.sender || 'Chatone';
+    // 1対1ルームはルーム名と送信者名が同一人物になるため、重複させず表示名のみにする。
+    const title = room.is_dm || roomName === senderName ? senderName : `${roomName}  ${senderName}`;
     const body = msg.body
       ? (msg.body.length > 80 ? msg.body.slice(0, 80) + '…' : msg.body)
       : msg.msg_type === 'stamp' ? '(スタンプ)' : '(ファイル)';
@@ -231,7 +234,7 @@ exports.onNewMessage = onValueCreated(
       // アプリ側のonBackgroundMessage(バッジ更新処理を含む)が実行されないため
       // データのみのメッセージにして表示を完全にクライアント側に委ねる。
       data: {
-        title: `${roomName}  ${msg.sender_name || msg.sender}`,
+        title,
         body,
         roomId,
       },
