@@ -7,7 +7,7 @@
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
 
-const CACHE_NAME = 'chatone-pwa-v17';
+const CACHE_NAME = 'chatone-pwa-v18';
 const ASSETS = [
   './',
   './index.html',
@@ -31,6 +31,16 @@ firebase.initializeApp({
 });
 
 const messaging = firebase.messaging();
+
+// PWAアプリアイコンのバッジ(未読数)を、現在表示中の通知件数に合わせて更新
+const updateBadgeFromNotifications = () => {
+  if (!('setAppBadge' in self.navigator)) return Promise.resolve();
+  return self.registration.getNotifications().then(list => {
+    return list.length
+      ? self.navigator.setAppBadge(list.length).catch(() => {})
+      : self.navigator.clearAppBadge().catch(() => {});
+  });
+};
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -101,11 +111,12 @@ messaging.onBackgroundMessage(payload => {
       { action: 'open', title: '開く' },
       { action: 'dismiss', title: '閉じる' },
     ],
-  });
+  }).then(updateBadgeFromNotifications);
 });
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
+  event.waitUntil(updateBadgeFromNotifications());
   if (event.action === 'dismiss') return;
 
   const url = event.notification.data?.url || assetUrl('./');
