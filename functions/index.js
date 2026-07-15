@@ -179,7 +179,13 @@ exports.kintoneFileDownload = onRequest(
  *  FCM プッシュ通知（新着メッセージ → 全メンバーに送信）
  * ============================================================ */
 exports.onNewMessage = onValueCreated(
-  { ref: '/messages/{roomId}/{messageId}', instance: process.env.FIREBASE_DATABASE_INSTANCE },
+  {
+    ref: '/messages/{roomId}/{messageId}',
+    instance: process.env.FIREBASE_DATABASE_INSTANCE,
+    // Realtime DatabaseインスタンスがAsia-southeast1にあるため、
+    // トリガーもそれに合わせて同一リージョンに固定する（他のHTTP関数はasia-northeast1のまま）。
+    region: 'asia-southeast1',
+  },
   async (event) => {
     const msg    = event.data.val();
     const roomId = event.params.roomId;
