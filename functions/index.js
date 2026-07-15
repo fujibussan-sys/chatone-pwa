@@ -26,7 +26,10 @@ const kintoneRequest = (subdomain, fullPath, method, authHeader, body) =>
       method,
       headers: {
         'X-Cybozu-Authorization': authHeader,
-        'Content-Type': 'application/json',
+        // ボディが無いGETにまで Content-Type: application/json を付けると、
+        // kintoneが空ボディをJSONとして解析しようとして CB_IL02(不正なリクエスト)
+        // になるため、ボディがある時だけ付与する。
+        ...(bodyStr ? { 'Content-Type': 'application/json' } : {}),
         ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {}),
       },
     };
@@ -112,6 +115,7 @@ exports.kintoneFileUpload = onRequest(
       method: 'POST',
       headers: {
         'X-Cybozu-Authorization': auth,
+        'X-Requested-With': 'XMLHttpRequest',
         'Content-Type': `multipart/form-data; boundary=${boundary}`,
         'Content-Length': bodyBuf.length,
       },
@@ -156,7 +160,7 @@ exports.kintoneFileDownload = onRequest(
       hostname: `${subdomain}.cybozu.com`,
       path: `/k/v1/file.json?fileKey=${encodeURIComponent(fileKey)}`,
       method: 'GET',
-      headers: { 'X-Cybozu-Authorization': auth },
+      headers: { 'X-Cybozu-Authorization': auth, 'X-Requested-With': 'XMLHttpRequest' },
     };
 
     try {
@@ -206,7 +210,14 @@ exports.onNewMessage = onValueCreated(
     const tokenSnaps    = await Promise.all(
       memberKeys.map(k => admin.database().ref(`/fcm_tokens/${k}`).get())
     );
-    const tokens = tokenSnaps.map(s => s.val()?.token).filter(Boolean);
+    // hotfixがトークンをデバイス毎のサブキーに保存するため(/fcm_tokens/{user}/{tokenKey})、
+    // 単一token直下だけでなく複数デバイス分もまとめて拾う。
+    const tokens = [...new Set(tokenSnaps.flatMap(s => {
+      const val = s.val();
+      if (!val) return [];
+      if (val.token) return [val.token];
+      return Object.values(val).map(v => v && v.token).filter(Boolean);
+    }))];
     if (!tokens.length) return null;
 
     const roomName = room.room_name || 'Chatone';
