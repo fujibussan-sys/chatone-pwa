@@ -85,19 +85,19 @@ exports.kintoneProxy = onRequest({ cors: true }, async (req, res) => {
       if (method === 'GET' && path === '/k/v1/records.json' && params?.app) {
         const variants = {
           appOnly: `/k/v1/records.json?app=${encodeURIComponent(params.app)}`,
-          simpleLimit: `/k/v1/records.json?app=${encodeURIComponent(params.app)}&query=${encodeURIComponent('limit 10')}`,
-          orderOnly: `/k/v1/records.json?app=${encodeURIComponent(params.app)}&query=${encodeURIComponent('order by $id asc')}`,
+          appInfo: `/k/v1/app.json?id=${encodeURIComponent(params.app)}`,
+          appsList: `/k/v1/apps.json?ids=${encodeURIComponent(params.app)}`,
         };
         const results = {};
         for (const [name, p] of Object.entries(variants)) {
           try {
             const r = await kintoneRequest(subdomain, p, 'GET', auth, null);
-            results[name] = { status: r.status, kb: r.body };
+            results[name] = { status: r.status, body: r.body };
           } catch (e) {
             results[name] = { error: e.message };
           }
         }
-        console.warn('[kintoneProxy] diagnostic variants', { app: params.app, results });
+        console.warn('[kintoneProxy] diagnostic variants app=' + params.app + ' ' + JSON.stringify(results));
       }
     }
     res.status(status).json(kb);
