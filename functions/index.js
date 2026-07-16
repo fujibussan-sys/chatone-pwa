@@ -5,11 +5,9 @@
  */
 const { onRequest } = require('firebase-functions/v2/https');
 const { onValueCreated } = require('firebase-functions/v2/database');
-const { onMessagePublished } = require('firebase-functions/v2/pubsub');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const https = require('https');
-const http = require('http');
 
 admin.initializeApp();
 
@@ -313,55 +311,3 @@ function encodeUserCode(code) {
     .replace(/\[/g,'_lb_').replace(/\]/g,'_rb_');
 }
 
-/* ============================================================
- *  【一時的な管理用関数】RTDBセキュリティルールの取得・更新
- *  この実行環境からは *.firebasedatabase.app へ直接アクセスできないため、
- *  Pub/Sub経由で一度だけ起動してルールを設定する。作業完了後に削除する。
- * ============================================================ */
-const RTDB_HOST = 'chatone-fujibussan-default-rtdb.asia-southeast1.firebasedatabase.app';
-
-const getMetadataToken = () => new Promise((resolve, reject) => {
-  const req = http.get({
-    hostname: 'metadata.google.internal',
-    path: '/computeMetadata/v2/instance/service-accounts/default/token',
-    headers: { 'Metadata-Flavor': 'Google' },
-  }, res => {
-    let data = '';
-    res.on('data', c => data += c);
-    res.on('end', () => {
-      try { resolve(JSON.parse(data).access_token); } catch (e) { reject(e); }
-    });
-  });
-  req.on('error', reject);
-});
-
-const rtdbRulesRequest = (method, token, bodyStr) => new Promise((resolve, reject) => {
-  const req = https.request({
-    hostname: RTDB_HOST,
-    path: '/.settings/rules.json',
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(bodyStr ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) } : {}),
-    },
-  }, res => {
-    let data = '';
-    res.on('data', c => data += c);
-    res.on('end', () => resolve({ status: res.statusCode, body: data }));
-  });
-  req.on('error', reject);
-  if (bodyStr) req.write(bodyStr);
-  req.end();
-});
-
-exports.adminDbRules = onMessagePublished('admin-db-rules', async (event) => {
-  const payload = event.data.message.json || {};
-  const token = await getMetadataToken();
-  if (payload.action === 'set' && payload.rules) {
-    const r = await rtdbRulesRequest('PUT', token, JSON.stringify(payload.rules));
-    console.log('[adminDbRules] set result', r.status, r.body);
-  } else {
-    const r = await rtdbRulesRequest('GET', token, null);
-    console.log('[adminDbRules] current rules', r.status, r.body);
-  }
-});

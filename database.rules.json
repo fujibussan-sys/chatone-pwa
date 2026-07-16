@@ -1,0 +1,23 @@
+{
+  "rules": {
+    ".read": "auth != null && auth.token.firebase.sign_in_provider === 'custom'",
+    ".write": "auth != null && auth.token.firebase.sign_in_provider === 'custom'",
+
+    "messages": {
+      "$roomId": {
+        ".indexOn": ["sent_at"]
+      }
+    },
+
+    "fcm_tokens": {
+      "$userCode": {
+        ".read":  "auth != null && auth.token.firebase.sign_in_provider === 'custom'",
+        ".write": "auth != null && auth.token.firebase.sign_in_provider === 'custom'"
+      }
+    },
+    "user_directory": {
+      ".read":  "auth != null && auth.token.firebase.sign_in_provider === 'custom'",
+      ".write": "auth != null && auth.token.firebase.sign_in_provider === 'custom'"
+    }
+  }
+}
