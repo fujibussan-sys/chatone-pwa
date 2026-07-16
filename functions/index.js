@@ -236,6 +236,7 @@ exports.kintoneAuth = onRequest({ cors: true }, async (req, res) => {
     const token = await admin.auth().createCustomToken(uid, { subdomain, loginName });
     res.status(200).json({ token });
   } catch (err) {
+    console.error('[kintoneAuth] error', err);
     res.status(500).json({ error: err.message });
   }
 });
