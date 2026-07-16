@@ -555,8 +555,8 @@ const setupFCM = async () => {
     messaging.onMessage(payload => {
       const roomId = payload.data?.roomId;
       if (roomId && roomId === state.currentRoom?.id) return;
-      const title = payload.notification?.title || 'Chatone';
-      const body  = payload.notification?.body  || '';
+      const title = payload.data?.title || payload.notification?.title || 'Chatone';
+      const body  = payload.data?.body  || payload.notification?.body  || '';
       showToast(`🔔 ${title}：${body}`, 'info');
     });
   } catch(e) { console.error('[FCM]', e); }
@@ -1341,6 +1341,10 @@ const attachRoomsListener = () => {
 const showBrowserNotification = (title, body, roomId) => {
   if (Notification.permission!=='granted') return;
   if (isNightMode()) return;
+  // フォアグラウンド用フォールバックのはずが可視性チェックが無く、アプリがバック
+  // グラウンドで生存しているだけでもFCMプッシュ通知と二重に発火していたため、
+  // 実際に画面が表示されている時だけに限定する。
+  if (document.visibilityState !== 'visible') return;
   try {
     const n = new Notification(title, {
       body, icon:'/icons/icon-192.png', tag:roomId||'chatone',
