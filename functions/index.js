@@ -6,8 +6,12 @@
 const { onRequest } = require('firebase-functions/v2/https');
 const { onValueCreated } = require('firebase-functions/v2/database');
 const { setGlobalOptions } = require('firebase-functions/v2');
+const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const https = require('https');
+
+const KINTONE_VERIFY_API_TOKEN = defineSecret('KINTONE_VERIFY_API_TOKEN');
+const KINTONE_VERIFY_APP_ID = 286;
 
 admin.initializeApp();
 
@@ -28,7 +32,7 @@ const checkSubdomain = (subdomain, res) => {
 /* ============================================================
  *  kintone への HTTPS リクエスト共通関数
  * ============================================================ */
-const kintoneRequest = (subdomain, fullPath, method, authHeader, body) =>
+const kintoneRequestWithHeaders = (subdomain, fullPath, method, extraHeaders, body) =>
   new Promise((resolve, reject) => {
     const bodyStr = (method !== 'GET' && body) ? JSON.stringify(body) : null;
     const options = {
@@ -36,7 +40,7 @@ const kintoneRequest = (subdomain, fullPath, method, authHeader, body) =>
       path: fullPath,
       method,
       headers: {
-        'X-Cybozu-Authorization': authHeader,
+        ...extraHeaders,
         // ボディが無いGETにまで Content-Type: application/json を付けると、
         // kintoneが空ボディをJSONとして解析しようとして CB_IL02(不正なリクエスト)
         // になるため、ボディがある時だけ付与する。
@@ -57,6 +61,12 @@ const kintoneRequest = (subdomain, fullPath, method, authHeader, body) =>
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
+
+const kintoneRequest = (subdomain, fullPath, method, authHeader, body) =>
+  kintoneRequestWithHeaders(subdomain, fullPath, method, { 'X-Cybozu-Authorization': authHeader }, body);
+
+const kintoneApiTokenRequest = (subdomain, fullPath, method, apiToken, body) =>
+  kintoneRequestWithHeaders(subdomain, fullPath, method, { 'X-Cybozu-API-Token': apiToken }, body);
 
 /* ============================================================
  *  kintone API プロキシ（GET / POST / PUT）
@@ -240,6 +250,70 @@ exports.kintoneAuth = onRequest({ cors: true }, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+/* ============================================================
+ *  kintone内カスタマイズJS(widget)用の認証
+ *  パスワードを持たないため、kintoneが記録する「作成者」（サーバー側で
+ *  付与され、クライアントJSからは偽装できない）を本人確認の証拠として使う。
+ *  widget側は事前に検証用kintoneアプリ(286)へnonceを書き込んでおき、
+ *  ここで専用APIトークンを使って独立に読み取り・照合する。
+ * ============================================================ */
+const NONCE_MAX_AGE_MS = 30 * 1000;
+
+exports.kintoneWidgetAuth = onRequest(
+  { cors: true, secrets: [KINTONE_VERIFY_API_TOKEN] },
+  async (req, res) => {
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+    if (req.method !== 'POST')   { res.status(405).send('Method Not Allowed'); return; }
+
+    const { code, nonce } = req.body || {};
+    if (!code || !nonce || !/^[A-Za-z0-9]+$/.test(nonce)) {
+      res.status(400).json({ error: 'code, nonce は必須です' }); return;
+    }
+
+    try {
+      const apiToken = KINTONE_VERIFY_API_TOKEN.value();
+      const query = `nonce = "${nonce}" limit 1`;
+      const { status, body: kb } = await kintoneApiTokenRequest(
+        ALLOWED_SUBDOMAIN,
+        `/k/v1/records.json?app=${KINTONE_VERIFY_APP_ID}&query=${encodeURIComponent(query)}`,
+        'GET', apiToken, null
+      );
+      if (status >= 400) {
+        console.error('[kintoneWidgetAuth] verify lookup failed', status, kb);
+        res.status(500).json({ error: '検証に失敗しました' }); return;
+      }
+      const record = kb?.records?.[0];
+      if (!record) {
+        res.status(401).json({ error: '検証情報が見つかりません' }); return;
+      }
+      const creatorCode = record['作成者']?.value?.code;
+      const createdAt = new Date(record['作成日時']?.value || 0).getTime();
+      if (creatorCode !== code) {
+        res.status(401).json({ error: 'ユーザーが一致しません' }); return;
+      }
+      if (!createdAt || Date.now() - createdAt > NONCE_MAX_AGE_MS) {
+        res.status(401).json({ error: '検証情報の有効期限が切れています' }); return;
+      }
+
+      // 使い捨てにするため検証レコードを削除する
+      const recordId = record['$id']?.value;
+      if (recordId) {
+        await kintoneApiTokenRequest(
+          ALLOWED_SUBDOMAIN, '/k/v1/records.json', 'DELETE', apiToken,
+          { app: KINTONE_VERIFY_APP_ID, ids: [Number(recordId)] }
+        );
+      }
+
+      const uid = 'kintone:' + code;
+      const token = await admin.auth().createCustomToken(uid, { subdomain: ALLOWED_SUBDOMAIN, loginName: code, via: 'widget' });
+      res.status(200).json({ token });
+    } catch (err) {
+      console.error('[kintoneWidgetAuth] error', err);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
 
 /* ============================================================
  *  FCM プッシュ通知（新着メッセージ → 全メンバーに送信）
