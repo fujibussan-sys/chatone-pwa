@@ -258,7 +258,7 @@ exports.kintoneAuth = onRequest({ cors: true }, async (req, res) => {
  *  widget側は事前に検証用kintoneアプリ(286)へnonceを書き込んでおき、
  *  ここで専用APIトークンを使って独立に読み取り・照合する。
  * ============================================================ */
-const NONCE_MAX_AGE_MS = 30 * 1000;
+const NONCE_MAX_AGE_MS = 120 * 1000;
 
 exports.kintoneWidgetAuth = onRequest(
   { cors: true, secrets: [KINTONE_VERIFY_API_TOKEN] },
@@ -289,6 +289,10 @@ exports.kintoneWidgetAuth = onRequest(
       }
       const creatorCode = record['作成者']?.value?.code;
       const createdAt = new Date(record['作成日時']?.value || 0).getTime();
+      console.log('[kintoneWidgetAuth] verify check', {
+        claimedCode: code, creatorCode, rawCreatedAt: record['作成日時']?.value,
+        createdAt, now: Date.now(), ageMs: Date.now() - createdAt,
+      });
       if (creatorCode !== code) {
         res.status(401).json({ error: 'ユーザーが一致しません' }); return;
       }
