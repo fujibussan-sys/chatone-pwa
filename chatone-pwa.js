@@ -380,6 +380,12 @@ const initFirebase = async () => {
     onChildAdded: (r,cb) => { r.on('child_added',cb); return ()=>r.off('child_added',cb); },
     serverTimestamp: () => firebase.database.ServerValue.TIMESTAMP,
   };
+  // firebase.auth()は永続化されたセッションの復元が非同期のため、直後に
+  // currentUserを見ると復元前でnullになり、既にサインイン済みでも毎回
+  // 再認証してしまう。復元完了を待ってから判定する。
+  await new Promise(resolve => {
+    const unsubscribe = _auth.onAuthStateChanged(u => { unsubscribe(); resolve(u); });
+  });
   if (!_auth.currentUser) {
     // 匿名サインインはRTDBセキュリティルール上「誰でもフルアクセス可能」になってしまうため、
     // kintoneログインを検証したうえで発行されるカスタムトークンでサインインする。
