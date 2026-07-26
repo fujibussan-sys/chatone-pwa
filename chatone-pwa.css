@@ -2411,6 +2411,13 @@ body,
   overflow: hidden !important;
 }
 
+/* 上記より詳細度を上げて .hidden を確実に優先させる。
+   （iPad等768px超の幅ではJS側がisMobile扱いにならず、単純にhiddenが
+   付け外しされるだけなので、ここが負けるとトーク画面が消えきらず残る） */
+.chat-area.hidden {
+  display: none !important;
+}
+
 .message-list {
   flex: 1 1 auto !important;
   min-height: 0 !important;
