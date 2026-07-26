@@ -216,12 +216,17 @@ const api = {
     return this._proxy(path, 'PUT', {}, body);
   },
 
+  async _delete(path, body) {
+    return this._proxy(path, 'DELETE', {}, body);
+  },
+
   getLoginUser() { return authStore.get(); },
 
   getRecords(appId, query='', limit=100) { const q = [query, `limit ${limit}`].filter(Boolean).join(' '); return this._get('/k/v1/records.json', { app:appId, query:q }); },
   getRecord(appId, id) { return this._get('/k/v1/record.json', { app:appId, id:Number(id) }); },
   addRecord(appId, record)    { return this._post('/k/v1/record.json', { app:appId, record }); },
   updateRecord(appId, id, record) { return this._put('/k/v1/record.json', { app:appId, id, record }); },
+  deleteRecords(appId, ids)   { return this._delete('/k/v1/records.json', { app:appId, ids }); },
 
   async uploadFile(file) {
     // ファイルアップロードは multipart/form-data のため専用エンドポイントを使用
@@ -1734,9 +1739,12 @@ const loadAllAvatars = async () => {
     const res=await api.getRecords(CONFIG.APP_ID_AVATARS,'',500);
     Object.values(state.avatarCache).forEach(v=>{ if(v?.url?.startsWith('blob:')) URL.revokeObjectURL(v.url); });
     state.avatarCache={};
-    await Promise.all(res.records.map(async rec=>{
+    // 同じuser/roomに重複レコードがあった場合、並行処理だとどちらが最後に
+    // 上書きされるかがタイミング次第になり、widget版(逐次処理=常に最新採用)
+    // と表示が食い違う原因になっていたため、逐次処理に統一する。
+    for (const rec of res.records) {
       const type=rec.avatar_type?.value, target=rec.avatar_target?.value, file=rec.avatar_file?.value?.[0];
-      if (!type||!target||!file?.fileKey) return;
+      if (!type||!target||!file?.fileKey) continue;
       const ckey=`${type}:${target}`;
       let dataUrl=await avatarIdb.get(ckey);
       if (!dataUrl) {
@@ -1744,11 +1752,11 @@ const loadAllAvatars = async () => {
           const blob=await api.fetchFile(file.fileKey);
           dataUrl=await new Promise(r=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.readAsDataURL(blob); });
           await avatarIdb.set(ckey,dataUrl);
-        } catch { return; }
+        } catch { continue; }
       }
       const resp=await fetch(dataUrl); const blob=await resp.blob();
       state.avatarCache[ckey]={ url:URL.createObjectURL(blob), recordId:rec.$id.value };
-    }));
+    }
     refreshAllAvatarElements();
   } catch(e) { console.warn('アバター読み込みを無効化しました:', e.message || e); loadAllAvatars.failed = true; }
 };
@@ -1793,11 +1801,22 @@ const cropToCircleBlob = file => new Promise((res,rej)=>{
   reader.onerror=rej; reader.readAsDataURL(file);
 });
 
-const saveAvatarToApp = async (type, target, blob, existingId) => {
+const saveAvatarToApp = async (type, target, blob) => {
   const f=new File([blob],`avatar_${type}_${target}.jpg`,{type:'image/jpeg'});
   const fileKey=await api.uploadFile(f);
-  if (existingId) { await api.updateRecord(CONFIG.APP_ID_AVATARS,parseInt(existingId),{avatar_file:{value:[{fileKey}]}}); }
-  else { await api.addRecord(CONFIG.APP_ID_AVATARS,{avatar_type:{value:type},avatar_target:{value:String(target)},avatar_file:{value:[{fileKey}]}}); }
+  // キャッシュ経由のrecordIdは古い/誤ったレコードを指している場合があるため、
+  // 都度kintoneに直接問い合わせて対象user/roomのレコードを確定する。
+  // 万一重複が残っていた場合も、ここで1件に整理する（最初の1件を更新し残りは削除）。
+  const esc = s => String(s).replace(/"/g,'\\"');
+  const q = await api.getRecords(CONFIG.APP_ID_AVATARS, `avatar_type = "${esc(type)}" and avatar_target = "${esc(target)}"`, 500);
+  const records = q.records || [];
+  if (records.length) {
+    const [keep, ...extra] = records;
+    await api.updateRecord(CONFIG.APP_ID_AVATARS, parseInt(keep.$id.value), {avatar_file:{value:[{fileKey}]}});
+    if (extra.length) await api.deleteRecords(CONFIG.APP_ID_AVATARS, extra.map(r=>parseInt(r.$id.value)));
+  } else {
+    await api.addRecord(CONFIG.APP_ID_AVATARS,{avatar_type:{value:type},avatar_target:{value:String(target)},avatar_file:{value:[{fileKey}]}});
+  }
 };
 
 const openMyAvatarPicker = () => {
@@ -1807,8 +1826,7 @@ const openMyAvatarPicker = () => {
     try {
       showToast('アイコンを保存中…','info');
       const blob=await cropToCircleBlob(file);
-      const ex=state.avatarCache[`user:${state.currentUser.code}`];
-      await saveAvatarToApp('user',state.currentUser.code,blob,ex?.recordId);
+      await saveAvatarToApp('user',state.currentUser.code,blob);
       await avatarIdb.clearAll(); state.avatarCache={};
       await loadAllAvatars(); showToast('アイコンを更新しました','success');
     } catch(e) { showToast('アイコンの保存に失敗しました','error'); console.error(e); }
@@ -1823,8 +1841,7 @@ const openRoomAvatarPicker = roomId => {
     try {
       showToast('グループアイコンを保存中…','info');
       const blob=await cropToCircleBlob(file);
-      const ex=state.avatarCache[`room:${roomId}`];
-      await saveAvatarToApp('room',roomId,blob,ex?.recordId);
+      await saveAvatarToApp('room',roomId,blob);
       await avatarIdb.clearAll(); state.avatarCache={};
       await loadAllAvatars(); openMembersPanel(); showToast('グループアイコンを更新しました','success');
     } catch(e) { showToast('グループアイコンの保存に失敗しました','error'); }
