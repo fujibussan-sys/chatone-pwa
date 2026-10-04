@@ -849,6 +849,9 @@ const startApp = async () => {
     attachRoomsListener();
 
     if (CONFIG.APP_ID_AVATARS) loadAllAvatars().catch(e => console.error('アバターロード失敗:', e));
+    // スタンプ送信ボタンを押した瞬間に初回読み込み(~200件)が走って固まらないよう、
+    // ルーム一覧表示後にバックグラウンドで先読みしておく（結果は24hキャッシュされる）。
+    if (CONFIG.APP_ID_STAMPS) loadStamps().catch(e => console.error('スタンプ先読み失敗:', e));
 
     // URLパラメータ ?room=xxx で直接ルームを開く（通知タップ時）
     const urlRoom = new URLSearchParams(location.search).get('room');
