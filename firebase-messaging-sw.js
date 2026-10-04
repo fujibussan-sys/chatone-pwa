@@ -7,7 +7,7 @@
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js');
 
-const CACHE_NAME = 'chatone-pwa-v24';
+const CACHE_NAME = 'chatone-pwa-v25';
 const ASSETS = [
   './',
   './index.html',
