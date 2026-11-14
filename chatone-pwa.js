@@ -521,7 +521,7 @@ const refreshSidebarUser = () => {
   if (!uEl || !state.currentUser) return;
   uEl.innerHTML = `
     <div class="user-avatar co-avatar-clickable" id="sidebar-my-avatar" title="アイコンを変更">${getInitial(state.currentUser.name)}</div>
-    <span class="user-name">${escapeHTML(state.currentUser.name)}</span>`;
+    <span class="user-name" title="${escapeHTML(state.currentUser.name)}">${escapeHTML(state.currentUser.name)}</span>`;
   document.getElementById('sidebar-my-avatar')?.addEventListener('click', openMyAvatarPicker);
 };
 
@@ -639,7 +639,7 @@ const showLoginScreen = () => {
     <div class="co-login-screen">
       <div class="co-login-card">
         <div class="co-login-logo">
-          <span class="co-login-logo-icon">💬</span>
+          <span class="co-login-logo-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
           <span class="co-login-logo-text">Chatone</span>
         </div>
         <p class="co-login-desc">kintoneのログイン情報でサインイン</p>
@@ -903,7 +903,7 @@ const buildUI = () => {
     <aside class="chatone-sidebar" id="chatone-sidebar">
       <div class="sidebar-header">
         <div class="sidebar-logo">
-          <span class="logo-icon">💬</span>
+          <span class="logo-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
           <span class="logo-text">Chatone</span>
         </div>
         <div class="sidebar-user" id="sidebar-user"></div>
@@ -924,7 +924,7 @@ const buildUI = () => {
     <!-- チャットエリア -->
     <main class="chatone-main" id="chatone-main">
       <div class="chat-empty" id="chat-empty">
-        <div class="empty-icon">💬</div>
+        <div class="empty-icon"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
         <div class="empty-title">Chatone</div>
         <div class="empty-sub">トークを選んでメッセージを始めよう</div>
       </div>

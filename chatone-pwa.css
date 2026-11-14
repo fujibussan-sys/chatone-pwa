@@ -11,7 +11,7 @@
 :root {
   --co-bg:             #f5f6f8;
   --co-sidebar-bg:     #ffffff;
-  --co-sidebar-width:  268px;
+  --co-sidebar-width:  300px;
   --co-header-bg:      #06b35a;        /* 新アクセント：深緑 */
   --co-header-text:    #ffffff;
   --co-accent:         #06b35a;
@@ -280,7 +280,7 @@
   flex-shrink: 0;
 }
 
-.logo-icon { font-size: 17px; }
+.logo-icon { display: flex; align-items: center; color: #fff; }
 
 .logo-text {
   color: #fff;
@@ -305,8 +305,8 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: rgba(255,255,255,0.28);
-  color: #fff;
+  background: #fff;
+  color: var(--co-header-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -316,7 +316,7 @@
   border: none;
   outline: none;
   overflow: hidden;
-  box-shadow: 0 0 0 2.5px rgba(255,255,255,0.55);
+  box-shadow: 0 0 0 2px #fff;
 }
 
 .user-name {
@@ -325,7 +325,7 @@
   text-overflow: ellipsis;
   font-size: 10.5px;
   min-width: 0;
-  max-width: 100px;
+  flex: 1 1 auto;
 }
 
 .btn-new-room {
@@ -505,7 +505,7 @@
   padding: 32px;
 }
 
-.empty-icon { font-size: 44px; opacity: 0.5; }
+.empty-icon { display: flex; align-items: center; justify-content: center; opacity: 0.5; color: var(--co-text-secondary); }
 .empty-title { font-size: 18px; font-weight: 700; color: var(--co-text-secondary); }
 .empty-sub   { font-size: 13px; color: var(--co-text-light); }
 
@@ -1200,7 +1200,7 @@
   transform: none;
 }
 .btn-send.sending { opacity: 0.7; }
-.btn-send svg { display: block; }
+.btn-send svg { display: block; transform: translateX(1.5px); }
 
 /* ====================================================
    スタンプピッカー
@@ -2211,7 +2211,7 @@ html, body {
   gap: 10px;
   margin-bottom: 6px;
 }
-.co-login-logo-icon { font-size: 32px; }
+.co-login-logo-icon { display: flex; align-items: center; color: var(--co-header-bg); }
 .co-login-logo-text { font-size: 26px; font-weight: 800; color: var(--co-text-primary); letter-spacing: -0.03em; }
 
 .co-login-desc {
