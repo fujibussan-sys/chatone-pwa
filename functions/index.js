@@ -346,9 +346,11 @@ exports.onNewMessage = onValueCreated(
     // 管理画面を開くたびに全メッセージを読み直すと転送量が嵩むため、
     // 既に動いているこのトリガーに相乗りしてO(1)の小さな書き込みで済ませる。
     const dateKey = jstDateKey(msg.sent_at || Date.now());
+    const senderKey = encodeUserCode(msg.sender);
     const statsPromise = Promise.all([
       admin.database().ref(`/stats/rooms/${roomId}/message_count`).transaction(cur => (cur || 0) + 1),
-      admin.database().ref(`/stats/daily/${dateKey}/users/${encodeUserCode(msg.sender)}`).set(true),
+      admin.database().ref(`/stats/daily/${dateKey}/users/${senderKey}`).set(true),
+      admin.database().ref(`/stats/users/${senderKey}/message_count`).transaction(cur => (cur || 0) + 1),
     ]).catch(err => console.error('[onNewMessage] stats update failed', err));
 
     const roomSnap = await admin.database().ref(`/rooms/${roomId}`).get();
@@ -466,24 +468,30 @@ exports.adminStats = onRequest({ cors: true }, async (req, res) => {
     res.status(403).json({ error: 'アクセス権がありません' }); return;
   }
 
+  const days = [7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 30;
+
   try {
     const db = admin.database();
-    const [roomsSnap, statsRoomsSnap, dailySnap, userDirSnap] = await Promise.all([
+    const [roomsSnap, statsRoomsSnap, statsUsersSnap, dailySnap, userDirSnap] = await Promise.all([
       db.ref('/rooms').get(),
       db.ref('/stats/rooms').get(),
+      db.ref('/stats/users').get(),
       db.ref('/stats/daily').get(),
       db.ref('/user_directory').get(),
     ]);
 
-    const rooms      = roomsSnap.val()    || {};
+    const rooms      = roomsSnap.val()      || {};
     const statsRooms = statsRoomsSnap.val() || {};
-    const daily       = dailySnap.val()    || {};
-    const userDir     = userDirSnap.val()  || {};
+    const statsUsers = statsUsersSnap.val() || {};
+    const daily       = dailySnap.val()     || {};
+    const userDir     = userDirSnap.val()   || {};
+
+    const nameOf = k => userDir[k]?.name || k;
 
     // DMの room_name は「@ログイン名」のような生コードでしかないことがあるため、
     // user_directoryで参加者名を解決して読みやすい表示名にする。
     const resolveDmName = (room) => {
-      const names = Object.keys(room.members || {}).map(k => userDir[k]?.name || k);
+      const names = Object.keys(room.members || {}).map(nameOf);
       return names.join('、') || 'DM';
     };
 
@@ -492,27 +500,48 @@ exports.adminStats = onRequest({ cors: true }, async (req, res) => {
       name: room.is_dm ? resolveDmName(room) : (room.room_name || '(名称未設定)'),
       isDm: !!room.is_dm,
       memberCount: room.members ? Object.keys(room.members).length : 0,
+      members: Object.keys(room.members || {}).map(nameOf),
       messageCount: statsRooms[id]?.message_count || 0,
       lastSentAt: room.last_sent_at || null,
     })).sort((a, b) => (b.lastSentAt || 0) - (a.lastSentAt || 0));
 
-    const dailyActive = Object.entries(daily)
+    const dailyActiveAll = Object.entries(daily)
       .map(([date, v]) => ({ date, activeUsers: v?.users ? Object.keys(v.users).length : 0 }))
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(-30);
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const dailyActive = dailyActiveAll.slice(-days);
+
+    // 前週比（直近7日平均 vs その前の7日平均）。データが足りない期間は null。
+    const avg = arr => arr.length ? arr.reduce((s, d) => s + d.activeUsers, 0) / arr.length : null;
+    const last7 = dailyActiveAll.slice(-7);
+    const prev7 = dailyActiveAll.slice(-14, -7);
+    const thisWeekAvg = avg(last7);
+    const lastWeekAvg = avg(prev7);
+    const activeTrend = (thisWeekAvg != null && lastWeekAvg)
+      ? { thisWeekAvg, lastWeekAvg, changePct: Math.round(((thisWeekAvg - lastWeekAvg) / lastWeekAvg) * 100) }
+      : null;
+
+    // 利用者ランキング(通算メッセージ数)。登録済みだが一度も送信していない人は0件として含める。
+    const userRanking = Object.keys(userDir).map(k => ({
+      code: userDir[k]?.code || k,
+      name: nameOf(k),
+      messageCount: statsUsers[k]?.message_count || 0,
+    })).sort((a, b) => b.messageCount - a.messageCount);
 
     let usage = null;
     try {
-      usage = await fetchRtdbUsage(30);
+      usage = await fetchRtdbUsage(days);
     } catch (err) {
       console.error('[adminStats] usage fetch failed', err);
     }
 
     res.status(200).json({
+      days,
       totalUsers: Object.keys(userDir).length,
       roomCount: roomList.length,
       rooms: roomList,
       dailyActive,
+      activeTrend,
+      userRanking,
       usage,
     });
   } catch (err) {
