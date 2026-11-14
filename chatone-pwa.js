@@ -1326,27 +1326,40 @@ const selectRoom = async (room) => {
  * ============================================================ */
 const attachRoomsListener = () => {
   state._roomsListener?.();
-  const cb = snap => {
-    const val = snap.val()||{};
-    const user = state.currentUser;
-    const prev = state._prevRooms||{};
-    Object.entries(val).forEach(([id,room]) => {
-      if (!hasMember(room.members,user.code)) return;
-      const prevU = prev[id] ? unreadCount(prev[id],user.code) : 0;
-      const nowU  = unreadCount(room,user.code);
-      if (nowU>prevU && state.currentRoom?.id!==id) {
-        const dn3 = getRoomDisplayName({id,...room},user.code);
-        const title3 = room.is_dm ? dn3 : `${dn3} ${room.last_sender_name||''}`;
-        showBrowserNotification(title3, room.last_message||'新しいメッセージ', id);
-      }
-    });
-    state._prevRooms = JSON.parse(JSON.stringify(val));
-    state.rooms = val;
+  const user = state.currentUser;
+
+  // 変更があった部屋1件分だけを受け取るようにする（.on('value')だと、誰か1人が
+  // メッセージを送るたびに全ルームのデータを全員の端末に再送信してしまい、
+  // Realtime Databaseの転送量コストが利用規模に応じて掛け算で膨らんでいたため）。
+  const handleRoomUpsert = room => {
+    const id = room.id;
+    if (!hasMember(room.members,user.code)) { delete state.rooms[id]; delete state._prevRooms[id]; return; }
+    const prev = state._prevRooms[id];
+    const prevU = prev ? unreadCount(prev,user.code) : 0;
+    const nowU  = unreadCount(room,user.code);
+    if (nowU>prevU && state.currentRoom?.id!==id) {
+      const dn3 = getRoomDisplayName({id,...room},user.code);
+      const title3 = room.is_dm ? dn3 : `${dn3} ${room.last_sender_name||''}`;
+      showBrowserNotification(title3, room.last_message||'新しいメッセージ', id);
+    }
+    state._prevRooms[id] = {...room};
+    state.rooms[id] = room;
+  };
+  const rerender = () => {
     updateTitleBadge();
     renderRoomList(state.rooms, document.getElementById('room-search')?.value||'');
   };
-  fb.roomsRef().on('value', cb);
-  state._roomsListener = () => fb.roomsRef().off('value', cb);
+  const onChild = snap => { handleRoomUpsert({ id:snap.key, ...snap.val() }); rerender(); };
+  const onRemoved = snap => { delete state.rooms[snap.key]; delete state._prevRooms[snap.key]; rerender(); };
+
+  fb.roomsRef().on('child_added', onChild);
+  fb.roomsRef().on('child_changed', onChild);
+  fb.roomsRef().on('child_removed', onRemoved);
+  state._roomsListener = () => {
+    fb.roomsRef().off('child_added', onChild);
+    fb.roomsRef().off('child_changed', onChild);
+    fb.roomsRef().off('child_removed', onRemoved);
+  };
 };
 
 /* ============================================================
