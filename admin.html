@@ -10,7 +10,7 @@
   /* chatone-pwa.cssはチャットウィジェットを画面ぴったりに固定する前提で
      html/bodyにoverflow:hiddenを当てているため、管理画面(縦に長い通常ページ)
      ではそれを打ち消して普通にスクロールできるようにする。 */
-  html, body { height: auto; overflow: auto; }
+  html, body { height: auto; overflow: auto; overscroll-behavior: auto; }
   body { margin: 0; background: var(--co-bg, #f5f6f8); font-family: -apple-system, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', 'Meiryo', 'Yu Gothic UI', sans-serif; }
   #admin-app { min-height: 100vh; }
 
