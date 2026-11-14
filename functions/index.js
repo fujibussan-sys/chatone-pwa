@@ -9,9 +9,14 @@ const { setGlobalOptions } = require('firebase-functions/v2');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 const https = require('https');
+const { MetricServiceClient } = require('@google-cloud/monitoring');
 
 const KINTONE_VERIFY_API_TOKEN = defineSecret('KINTONE_VERIFY_API_TOKEN');
 const KINTONE_VERIFY_APP_ID = 286;
+
+// 管理画面(/admin.html)を使えるログイン名（小文字で比較）。
+// 増やす場合はここに追記する。
+const ADMIN_LOGIN_NAMES = new Set(['tsumura@fujibussan.co.jp', 'tsumura']);
 
 admin.initializeApp();
 
@@ -243,7 +248,9 @@ exports.kintoneAuth = onRequest({ cors: true }, async (req, res) => {
       res.status(status).json({ error: kb?.message || kb?.error || `kintone error ${status}` }); return;
     }
     const uid = 'kintone:' + loginName;
-    const token = await admin.auth().createCustomToken(uid, { subdomain, loginName });
+    const claims = { subdomain, loginName };
+    if (ADMIN_LOGIN_NAMES.has(loginName.toLowerCase())) claims.admin = true;
+    const token = await admin.auth().createCustomToken(uid, claims);
     res.status(200).json({ token });
   } catch (err) {
     console.error('[kintoneAuth] error', err);
@@ -335,8 +342,18 @@ exports.onNewMessage = onValueCreated(
     const roomId = event.params.roomId;
     if (!msg || ['system', 'deleted'].includes(msg.msg_type)) return null;
 
+    // 管理画面用の利用統計をメッセージ送信時に集計しておく（書き込み時集計）。
+    // 管理画面を開くたびに全メッセージを読み直すと転送量が嵩むため、
+    // 既に動いているこのトリガーに相乗りしてO(1)の小さな書き込みで済ませる。
+    const dateKey = jstDateKey(msg.sent_at || Date.now());
+    const statsPromise = Promise.all([
+      admin.database().ref(`/stats/rooms/${roomId}/message_count`).transaction(cur => (cur || 0) + 1),
+      admin.database().ref(`/stats/daily/${dateKey}/users/${encodeUserCode(msg.sender)}`).set(true),
+    ]).catch(err => console.error('[onNewMessage] stats update failed', err));
+
     const roomSnap = await admin.database().ref(`/rooms/${roomId}`).get();
     const room     = roomSnap.val();
+    await statsPromise;
     if (!room?.members) return null;
 
     const senderEncoded = encodeUserCode(msg.sender);
@@ -389,4 +406,111 @@ function encodeUserCode(code) {
     .replace(/#/g,'_hash_').replace(/\$/g,'_dollar_').replace(/\//g,'_slash_')
     .replace(/\[/g,'_lb_').replace(/\]/g,'_rb_');
 }
+
+// JST基準の日付キー(YYYY-MM-DD)。タイムゾーンDB参照なしで済むよう+9hシフトのみで計算。
+function jstDateKey(ms) {
+  return new Date(ms + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/* ============================================================
+ *  管理画面用: Realtime Databaseの転送量をCloud Monitoring APIから取得
+ *  （要: Cloud Functionsのランタイムサービスアカウントに roles/monitoring.viewer）
+ * ============================================================ */
+const metricsClient = new MetricServiceClient();
+
+async function fetchRtdbUsage(days = 30) {
+  const projectId = await metricsClient.getProjectId();
+  const now = Math.floor(Date.now() / 1000);
+  const startTime = now - days * 86400;
+
+  const [timeSeries] = await metricsClient.listTimeSeries({
+    name: metricsClient.projectPath(projectId),
+    filter: 'metric.type="firebasedatabase.googleapis.com/network/sent_payload_bytes_count"',
+    interval: { startTime: { seconds: startTime }, endTime: { seconds: now } },
+    aggregation: {
+      alignmentPeriod: { seconds: 86400 },
+      perSeriesAligner: 'ALIGN_SUM',
+      crossSeriesReducer: 'REDUCE_SUM',
+    },
+    view: 'FULL',
+  });
+
+  const points = (timeSeries?.[0]?.points || [])
+    .map(p => ({
+      date: new Date(Number(p.interval.endTime.seconds) * 1000).toISOString().slice(0, 10),
+      bytes: Number(p.value?.int64Value ?? p.value?.doubleValue ?? 0),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return { days, points };
+}
+
+/* ============================================================
+ *  管理画面用の集計データ取得
+ *  tsumura@fujibussan.co.jp のみ閲覧可（kintoneAuthで付与したadminクレームを検証）
+ * ============================================================ */
+exports.adminStats = onRequest({ cors: true }, async (req, res) => {
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+
+  const authHeader = req.get('Authorization') || '';
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!idToken) { res.status(401).json({ error: '認証情報がありません' }); return; }
+
+  let decoded;
+  try {
+    decoded = await admin.auth().verifyIdToken(idToken);
+  } catch (err) {
+    res.status(401).json({ error: 'トークンが無効です' }); return;
+  }
+  if (decoded.admin !== true) {
+    res.status(403).json({ error: 'アクセス権がありません' }); return;
+  }
+
+  try {
+    const db = admin.database();
+    const [roomsSnap, statsRoomsSnap, dailySnap, userDirSnap] = await Promise.all([
+      db.ref('/rooms').get(),
+      db.ref('/stats/rooms').get(),
+      db.ref('/stats/daily').get(),
+      db.ref('/user_directory').get(),
+    ]);
+
+    const rooms      = roomsSnap.val()    || {};
+    const statsRooms = statsRoomsSnap.val() || {};
+    const daily       = dailySnap.val()    || {};
+    const userDir     = userDirSnap.val()  || {};
+
+    const roomList = Object.entries(rooms).map(([id, room]) => ({
+      id,
+      name: room.room_name || (room.is_dm ? 'DM' : '(名称未設定)'),
+      isDm: !!room.is_dm,
+      memberCount: room.members ? Object.keys(room.members).length : 0,
+      messageCount: statsRooms[id]?.message_count || 0,
+      lastSentAt: room.last_sent_at || null,
+    })).sort((a, b) => (b.lastSentAt || 0) - (a.lastSentAt || 0));
+
+    const dailyActive = Object.entries(daily)
+      .map(([date, v]) => ({ date, activeUsers: v?.users ? Object.keys(v.users).length : 0 }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-30);
+
+    let usage = null;
+    try {
+      usage = await fetchRtdbUsage(30);
+    } catch (err) {
+      console.error('[adminStats] usage fetch failed', err);
+    }
+
+    res.status(200).json({
+      totalUsers: Object.keys(userDir).length,
+      roomCount: roomList.length,
+      rooms: roomList,
+      dailyActive,
+      usage,
+    });
+  } catch (err) {
+    console.error('[adminStats] error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 

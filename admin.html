@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Chatone 管理画面</title>
+<link rel="stylesheet" href="chatone-pwa.css">
+<style>
+  body { margin: 0; background: var(--co-bg, #f5f6f8); font-family: -apple-system, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', 'Meiryo', 'Yu Gothic UI', sans-serif; }
+  #admin-app { min-height: 100vh; }
+
+  .ad-header {
+    background: var(--co-header-bg, #06b35a);
+    color: #fff;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .ad-header-title { font-size: 16px; font-weight: 800; }
+  .ad-header-sub { font-size: 12px; opacity: 0.85; margin-left: auto; }
+  .ad-logout { background: rgba(255,255,255,0.18); border: none; color: #fff; border-radius: 16px; padding: 6px 14px; font-size: 12px; cursor: pointer; }
+  .ad-logout:hover { background: rgba(255,255,255,0.3); }
+
+  .ad-main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
+
+  .ad-card {
+    background: #fff;
+    border: 1px solid var(--co-border, #e9ecef);
+    border-radius: 16px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+    box-shadow: var(--co-shadow, 0 1px 12px rgba(0,0,0,0.08));
+  }
+  .ad-card-title { font-size: 14px; font-weight: 700; color: var(--co-text-primary, #111827); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .ad-card-title .ad-badge { font-size: 10px; font-weight: 700; color: var(--co-text-light, #adb5bd); }
+
+  .ad-stat-row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .ad-stat { min-width: 110px; }
+  .ad-stat-num { font-size: 26px; font-weight: 800; color: var(--co-accent-dark, #048a44); line-height: 1.2; }
+  .ad-stat-label { font-size: 11.5px; color: var(--co-text-secondary, #6b7280); margin-top: 2px; }
+
+  .ad-chart { display: flex; align-items: flex-end; gap: 2px; height: 90px; margin-top: 14px; overflow-x: auto; padding-bottom: 2px; }
+  .ad-bar-wrap { flex-shrink: 0; width: 10px; height: 100%; display: flex; align-items: flex-end; position: relative; }
+  .ad-bar { width: 100%; background: var(--co-accent, #06b35a); border-radius: 2px 2px 0 0; min-height: 2px; transition: background 0.12s; }
+  .ad-bar-wrap:hover .ad-bar { background: var(--co-accent-dark, #048a44); }
+  .ad-bar-wrap:hover .ad-bar-tip { opacity: 1; }
+  .ad-bar-tip {
+    position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+    background: #1f2937; color: #fff; font-size: 10px; white-space: nowrap;
+    padding: 3px 6px; border-radius: 6px; opacity: 0; pointer-events: none;
+    margin-bottom: 4px; transition: opacity 0.12s;
+  }
+
+  .ad-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ad-table th { text-align: left; color: var(--co-text-secondary, #6b7280); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 6px 8px; border-bottom: 1px solid var(--co-border, #e9ecef); }
+  .ad-table td { padding: 8px; border-bottom: 1px solid var(--co-border, #e9ecef); color: var(--co-text-primary, #111827); }
+  .ad-table tr:last-child td { border-bottom: none; }
+  .ad-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .ad-csv-btn {
+    font-size: 12px; font-weight: 600; color: var(--co-accent-dark, #048a44);
+    background: var(--co-accent-light, #e6f9ef); border: none; border-radius: 14px;
+    padding: 6px 14px; cursor: pointer; margin-left: auto;
+  }
+  .ad-csv-btn:hover { background: #d4f5e2; }
+
+  .ad-empty, .ad-error { color: var(--co-text-light, #adb5bd); font-size: 13px; padding: 12px 0; text-align: center; }
+  .ad-error { color: #ef4444; }
+
+  .ad-loading { text-align: center; color: var(--co-text-secondary, #6b7280); padding: 60px 20px; font-size: 13px; }
+
+  .ad-denied { max-width: 360px; margin: 80px auto; text-align: center; color: var(--co-text-secondary, #6b7280); }
+  .ad-denied-title { font-size: 16px; font-weight: 700; color: var(--co-text-primary, #111827); margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <div id="admin-app">
+    <div class="co-login-screen" id="ad-login-screen">
+      <div class="co-login-card">
+        <div class="co-login-logo">
+          <span class="co-login-logo-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
+          <span class="co-login-logo-text">Chatone 管理</span>
+        </div>
+        <p class="co-login-desc">kintoneの管理者アカウントでサインイン</p>
+
+        <form id="ad-l-form" onsubmit="return false;" autocomplete="on">
+          <label class="co-login-label">kintoneドメイン</label>
+          <div class="co-login-domain-row">
+            <input id="ad-l-domain" class="co-login-input" type="text" value="fujibussan"
+              autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="your-domain"
+              autocomplete="username" />
+            <span class="co-login-domain-suffix">.cybozu.com</span>
+          </div>
+
+          <label class="co-login-label">ログイン名</label>
+          <input id="ad-l-name" class="co-login-input" type="text" autocorrect="off" autocapitalize="off"
+            spellcheck="false" placeholder="例: tsumura" autocomplete="username" />
+
+          <label class="co-login-label">パスワード</label>
+          <input id="ad-l-pass" class="co-login-input" type="password" placeholder="••••••••"
+            autocomplete="current-password" />
+
+          <button class="co-login-btn" id="ad-l-btn" type="button">ログイン</button>
+          <div class="co-login-error hidden" id="ad-l-err"></div>
+        </form>
+      </div>
+    </div>
+
+    <div id="ad-denied" class="ad-denied hidden">
+      <div class="ad-denied-title">アクセス権がありません</div>
+      <p>この画面は管理者アカウントのみ利用できます。</p>
+      <button class="co-login-btn" id="ad-denied-back" style="max-width:200px;margin:16px auto 0;">ログイン画面に戻る</button>
+    </div>
+
+    <div id="ad-dashboard" class="hidden">
+      <div class="ad-header">
+        <span class="ad-header-title">Chatone 管理画面</span>
+        <span class="ad-header-sub" id="ad-updated-at"></span>
+        <button class="ad-logout" id="ad-logout-btn">ログアウト</button>
+      </div>
+      <div class="ad-main">
+        <div class="ad-loading" id="ad-loading">読み込み中…</div>
+        <div id="ad-content" class="hidden">
+
+          <div class="ad-card">
+            <div class="ad-card-title">利用状況</div>
+            <div class="ad-stat-row">
+              <div class="ad-stat"><div class="ad-stat-num" id="ad-stat-today">–</div><div class="ad-stat-label">本日のアクティブ利用者</div></div>
+              <div class="ad-stat"><div class="ad-stat-num" id="ad-stat-total-users">–</div><div class="ad-stat-label">登録ユーザー数</div></div>
+              <div class="ad-stat"><div class="ad-stat-num" id="ad-stat-rooms">–</div><div class="ad-stat-label">トーク数</div></div>
+            </div>
+            <div class="ad-chart" id="ad-active-chart"></div>
+          </div>
+
+          <div class="ad-card">
+            <div class="ad-card-title">
+              トーク一覧
+              <span class="ad-badge" id="ad-rooms-count"></span>
+              <button class="ad-csv-btn" id="ad-csv-btn">CSVダウンロード</button>
+            </div>
+            <div style="max-height:360px;overflow-y:auto;">
+              <table class="ad-table" id="ad-rooms-table">
+                <thead>
+                  <tr><th>トーク名</th><th class="num">参加者</th><th class="num">メッセージ数</th><th>最終更新</th></tr>
+                </thead>
+                <tbody id="ad-rooms-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="ad-card">
+            <div class="ad-card-title">Firebase 使用量（Realtime Database 転送量・直近30日）</div>
+            <div id="ad-usage-body">
+              <div class="ad-empty">読み込み中…</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script>
+'use strict';
+
+const CONFIG = {
+  KINTONE_SUBDOMAIN: 'fujibussan',
+  PROXY_ENDPOINTS: {
+    kintoneAuth: 'https://kintoneauth-63pf5chkva-an.a.run.app',
+    // デプロイ後、実際のURLがこれと異なる場合はFirebase Consoleで確認して書き換えてください。
+    adminStats:  'https://adminstats-63pf5chkva-an.a.run.app',
+  },
+  FIREBASE: {
+    apiKey:            'AIzaSyBlTJjF_fOYLpEQTsxt_X18s-A_4FGV-9U',
+    authDomain:        'chatone-fujibussan.firebaseapp.com',
+    databaseURL:       'https://chatone-fujibussan-default-rtdb.asia-southeast1.firebasedatabase.app',
+    projectId:         'chatone-fujibussan',
+    storageBucket:     'chatone-fujibussan.firebasestorage.app',
+    messagingSenderId: '1077755971352',
+    appId:             '1:1077755971352:web:4267f0b620e79b0af5c06d',
+  },
+};
+
+firebase.initializeApp(CONFIG.FIREBASE);
+
+const el = id => document.getElementById(id);
+const show = (id, on = true) => el(id).classList.toggle('hidden', !on);
+
+const escapeHTML = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtDateTime = ms => !ms ? '—' : new Date(ms).toLocaleString('ja-JP', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+const fmtBytes = n => {
+  if (!n) return '0 B';
+  const units = ['B','KB','MB','GB','TB'];
+  let i = 0; let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+};
+
+/* ---- ログイン ---- */
+const doLogin = async () => {
+  const subdomain = el('ad-l-domain').value.trim();
+  const loginName = el('ad-l-name').value.trim();
+  const password  = el('ad-l-pass').value;
+  const err = el('ad-l-err');
+  err.classList.add('hidden');
+  if (!subdomain || !loginName || !password) {
+    err.textContent = 'すべての項目を入力してください';
+    err.classList.remove('hidden');
+    return;
+  }
+  const btn = el('ad-l-btn');
+  btn.disabled = true;
+  btn.textContent = '確認中…';
+  try {
+    const auth = btoa(`${loginName}:${password}`);
+    const res = await fetch(CONFIG.PROXY_ENDPOINTS.kintoneAuth, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subdomain, auth }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `ログインに失敗しました (${res.status})`);
+    await firebase.auth().signInWithCustomToken(data.token);
+    const idTokenResult = await firebase.auth().currentUser.getIdTokenResult(true);
+    if (idTokenResult.claims.admin !== true) {
+      await firebase.auth().signOut();
+      show('ad-login-screen', false);
+      show('ad-denied', true);
+      return;
+    }
+    show('ad-login-screen', false);
+    show('ad-dashboard', true);
+    loadStats();
+  } catch (e) {
+    err.textContent = e.message || 'ログインに失敗しました';
+    err.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'ログイン';
+  }
+};
+
+el('ad-l-btn').addEventListener('click', doLogin);
+el('ad-l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+el('ad-denied-back').addEventListener('click', () => { show('ad-denied', false); show('ad-login-screen', true); });
+el('ad-logout-btn').addEventListener('click', async () => {
+  await firebase.auth().signOut();
+  location.reload();
+});
+
+/* ---- ダッシュボード ---- */
+let lastRooms = [];
+
+const renderActiveChart = (dailyActive) => {
+  const chart = el('ad-active-chart');
+  chart.innerHTML = '';
+  const max = Math.max(1, ...dailyActive.map(d => d.activeUsers));
+  dailyActive.forEach(d => {
+    const wrap = document.createElement('div');
+    wrap.className = 'ad-bar-wrap';
+    const bar = document.createElement('div');
+    bar.className = 'ad-bar';
+    bar.style.height = `${Math.max(2, Math.round((d.activeUsers / max) * 86))}px`;
+    const tip = document.createElement('div');
+    tip.className = 'ad-bar-tip';
+    tip.textContent = `${d.date}: ${d.activeUsers}人`;
+    wrap.appendChild(bar);
+    wrap.appendChild(tip);
+    chart.appendChild(wrap);
+  });
+};
+
+const renderUsageChart = (usage) => {
+  const body = el('ad-usage-body');
+  if (!usage || !usage.points?.length) {
+    body.innerHTML = '<div class="ad-error">取得できませんでした（Cloud MonitoringのAPI権限をご確認ください）</div>';
+    return;
+  }
+  const total = usage.points.reduce((s, p) => s + p.bytes, 0);
+  body.innerHTML = '';
+  const statRow = document.createElement('div');
+  statRow.className = 'ad-stat-row';
+  statRow.innerHTML = `<div class="ad-stat"><div class="ad-stat-num">${fmtBytes(total)}</div><div class="ad-stat-label">直近${usage.days}日間の合計転送量</div></div>`;
+  body.appendChild(statRow);
+
+  const chart = document.createElement('div');
+  chart.className = 'ad-chart';
+  const max = Math.max(1, ...usage.points.map(p => p.bytes));
+  usage.points.forEach(p => {
+    const wrap = document.createElement('div');
+    wrap.className = 'ad-bar-wrap';
+    const bar = document.createElement('div');
+    bar.className = 'ad-bar';
+    bar.style.height = `${Math.max(2, Math.round((p.bytes / max) * 86))}px`;
+    const tip = document.createElement('div');
+    tip.className = 'ad-bar-tip';
+    tip.textContent = `${p.date}: ${fmtBytes(p.bytes)}`;
+    wrap.appendChild(bar);
+    wrap.appendChild(tip);
+    chart.appendChild(wrap);
+  });
+  body.appendChild(chart);
+};
+
+const renderRooms = (rooms) => {
+  el('ad-rooms-count').textContent = `${rooms.length}件`;
+  const tbody = el('ad-rooms-tbody');
+  if (!rooms.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="ad-empty">トークがありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rooms.map(r => `
+    <tr>
+      <td>${escapeHTML(r.name)}${r.isDm ? ' <span class="ad-badge">DM</span>' : ''}</td>
+      <td class="num">${r.memberCount}</td>
+      <td class="num">${r.messageCount}</td>
+      <td>${fmtDateTime(r.lastSentAt)}</td>
+    </tr>`).join('');
+};
+
+const downloadCSV = () => {
+  const header = ['トーク名', '種別', '参加者数', 'メッセージ数', '最終更新日時'];
+  const rows = lastRooms.map(r => [
+    r.name, r.isDm ? 'DM' : 'グループ', r.memberCount, r.messageCount,
+    r.lastSentAt ? new Date(r.lastSentAt).toLocaleString('ja-JP') : '',
+  ]);
+  const csv = [header, ...rows]
+    .map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    .join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `chatone_rooms_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+el('ad-csv-btn').addEventListener('click', downloadCSV);
+
+const loadStats = async () => {
+  show('ad-loading', true);
+  show('ad-content', false);
+  try {
+    const idToken = await firebase.auth().currentUser.getIdToken();
+    const res = await fetch(CONFIG.PROXY_ENDPOINTS.adminStats, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `取得に失敗しました (${res.status})`);
+
+    lastRooms = data.rooms || [];
+    el('ad-updated-at').textContent = `更新: ${new Date().toLocaleTimeString('ja-JP')}`;
+    el('ad-stat-total-users').textContent = data.totalUsers ?? '–';
+    el('ad-stat-rooms').textContent = data.roomCount ?? '–';
+    const today = (data.dailyActive || []).slice(-1)[0];
+    el('ad-stat-today').textContent = today ? today.activeUsers : '0';
+
+    renderActiveChart(data.dailyActive || []);
+    renderRooms(lastRooms);
+    renderUsageChart(data.usage);
+
+    show('ad-loading', false);
+    show('ad-content', true);
+  } catch (e) {
+    el('ad-loading').innerHTML = `<div class="ad-error">${escapeHTML(e.message || '読み込みに失敗しました')}</div>`;
+  }
+};
+
+/* ---- 再読み込み時に既にログイン済みなら自動で復帰 ---- */
+firebase.auth().onAuthStateChanged(async (user) => {
+  if (!user) return;
+  const idTokenResult = await user.getIdTokenResult();
+  if (idTokenResult.claims.admin === true) {
+    show('ad-login-screen', false);
+    show('ad-dashboard', true);
+    loadStats();
+  }
+});
+</script>
+</body>
+</html>
