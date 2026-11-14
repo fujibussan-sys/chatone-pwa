@@ -2178,7 +2178,7 @@ html, body {
   z-index: 99999;
 }
 .co-splash-inner { text-align: center; color: #fff; }
-.co-splash-icon  { font-size: 64px; margin-bottom: 12px; }
+.co-splash-icon  { display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
 .co-splash-title { font-size: 28px; font-weight: 800; margin-bottom: 8px; letter-spacing: -0.02em; }
 .co-splash-status { font-size: 14px; opacity: 0.8; }
 
