@@ -1755,12 +1755,13 @@ const loadAllAvatars = async () => {
     const res=await api.getRecords(CONFIG.APP_ID_AVATARS,'',500);
     Object.values(state.avatarCache).forEach(v=>{ if(v?.url?.startsWith('blob:')) URL.revokeObjectURL(v.url); });
     state.avatarCache={};
-    // 同じuser/roomに重複レコードがあった場合、並行処理だとどちらが最後に
-    // 上書きされるかがタイミング次第になり、widget版(逐次処理=常に最新採用)
-    // と表示が食い違う原因になっていたため、逐次処理に統一する。
-    for (const rec of res.records) {
+    // 画像の取得自体は並列実行して速度を確保しつつ、Promise.allは結果を
+    // 入力順で返すため、state.avatarCacheへの反映はその順序どおりに行う。
+    // これにより同じuser/roomに重複レコードがあっても「常に最新(配列の
+    // 最後)を採用」が速度に関わらず決定的になる（widget版と一致させる）。
+    const results = await Promise.all(res.records.map(async rec => {
       const type=rec.avatar_type?.value, target=rec.avatar_target?.value, file=rec.avatar_file?.value?.[0];
-      if (!type||!target||!file?.fileKey) continue;
+      if (!type||!target||!file?.fileKey) return null;
       const ckey=`${type}:${target}`;
       let dataUrl=await avatarIdb.get(ckey);
       if (!dataUrl) {
@@ -1768,11 +1769,12 @@ const loadAllAvatars = async () => {
           const blob=await api.fetchFile(file.fileKey);
           dataUrl=await new Promise(r=>{ const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.readAsDataURL(blob); });
           await avatarIdb.set(ckey,dataUrl);
-        } catch { continue; }
+        } catch { return null; }
       }
       const resp=await fetch(dataUrl); const blob=await resp.blob();
-      state.avatarCache[ckey]={ url:URL.createObjectURL(blob), recordId:rec.$id.value };
-    }
+      return { ckey, url:URL.createObjectURL(blob), recordId:rec.$id.value };
+    }));
+    results.forEach(r => { if (r) state.avatarCache[r.ckey]=r; });
     refreshAllAvatarElements();
   } catch(e) { console.warn('アバター読み込みを無効化しました:', e.message || e); loadAllAvatars.failed = true; }
 };
