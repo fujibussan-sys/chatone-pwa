@@ -43,17 +43,37 @@ kintone上で動いていたチャットアプリ（カスタマイズJS）を�
 | `sw.js` | 旧Service Worker。hotfixにより実際には登録されない（レガシー） |
 | `manifest.json` | PWAマニフェスト |
 | `firebase.json` | Firebase Hosting/Functionsのデプロイ設定 |
-| `functions/index.js` | Cloud Functions（kintoneプロキシ3種 + 新着メッセージのFCM送信） |
+| `functions/index.js` | Cloud Functions（kintoneプロキシ3種 + 新着メッセージのFCM送信 + 管理画面用API） |
 | `icons/` | PWAアイコン一式 |
+| `admin.html` | 管理画面（利用率・トーク一覧・Firebase使用量）。tsumura@fujibussan.co.jp 専用 |
 
 ## 設定値の場所
 
 - フロント側の環境設定: `chatone-pwa.js` 先頭の `CONFIG` オブジェクト
   （kintoneサブドメイン、Cloud FunctionsのURL、Firebase設定、kintoneアプリID等）
-- Firebase設定はフロント3箇所（`chatone-pwa.js` / `firebase-messaging-sw.js`）に
-  重複して直書きされている。変更時は両方を同期させること。
+- Firebase設定はフロント4箇所（`chatone-pwa.js` / `firebase-messaging-sw.js` / `admin.html`）に
+  重複して直書きされている。変更時は全部を同期させること。
 - Cloud Functionsのリージョンは `asia-northeast1`（`functions/index.js` の
   `setGlobalOptions`）。
+
+## 管理画面（admin.html）
+
+- `tsumura@fujibussan.co.jp` のみアクセス可。`functions/index.js` の `kintoneAuth` が
+  ログイン名を `ADMIN_LOGIN_NAMES`（小文字比較）と照合し、一致すればカスタムトークンに
+  `admin: true` クレームを載せる。`admin.html` 側はこのクレームの有無で画面を出し分け、
+  `adminStats` Cloud Function 側でも同じクレームを再検証する（クライアント側チェックのみに
+  依存しない）。管理者を増やす場合は `ADMIN_LOGIN_NAMES` に追記する。
+- 利用率・トーク別メッセージ数は、画面を開くたびに全メッセージを読み直すとRTDB転送量が
+  嵩むため、`onNewMessage` トリガーに相乗りして書き込み時に `/stats/rooms/{roomId}/message_count`
+  と `/stats/daily/{YYYY-MM-DD}/users/{encodedCode}` を集計している（書き込み時集計）。
+  管理画面はこの小さな集計ノードだけを読む。
+- Firebase使用量パネルは Cloud Monitoring API（`@google-cloud/monitoring`）経由でRTDBの
+  転送量（`firebasedatabase.googleapis.com/network/sent_payload_bytes_count`）を取得する。
+  Cloud Functionsのランタイムサービスアカウントに `roles/monitoring.viewer` が必要
+  （未付与だとこのパネルだけ「取得できませんでした」表示になるが、他の機能には影響しない）。
+- `admin.html` 内の `PROXY_ENDPOINTS.adminStats` のURLは、既存関数のURLパターンから
+  推測した値（`adminstats-63pf5chkva-an.a.run.app`）。初回デプロイ後、Firebase Consoleで
+  実際のURLを確認し、異なっていれば書き換えること。
 
 ## この環境でできないこと
 
