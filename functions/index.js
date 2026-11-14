@@ -480,9 +480,16 @@ exports.adminStats = onRequest({ cors: true }, async (req, res) => {
     const daily       = dailySnap.val()    || {};
     const userDir     = userDirSnap.val()  || {};
 
+    // DMの room_name は「@ログイン名」のような生コードでしかないことがあるため、
+    // user_directoryで参加者名を解決して読みやすい表示名にする。
+    const resolveDmName = (room) => {
+      const names = Object.keys(room.members || {}).map(k => userDir[k]?.name || k);
+      return names.join('、') || 'DM';
+    };
+
     const roomList = Object.entries(rooms).map(([id, room]) => ({
       id,
-      name: room.room_name || (room.is_dm ? 'DM' : '(名称未設定)'),
+      name: room.is_dm ? resolveDmName(room) : (room.room_name || '(名称未設定)'),
       isDm: !!room.is_dm,
       memberCount: room.members ? Object.keys(room.members).length : 0,
       messageCount: statsRooms[id]?.message_count || 0,
