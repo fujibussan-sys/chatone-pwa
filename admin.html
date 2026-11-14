@@ -36,10 +36,50 @@
   .ad-card-title { font-size: 14px; font-weight: 700; color: var(--co-text-primary, #111827); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
   .ad-card-title .ad-badge { font-size: 10px; font-weight: 700; color: var(--co-text-light, #adb5bd); }
 
-  .ad-stat-row { display: flex; gap: 24px; flex-wrap: wrap; }
+  .ad-period-toggle { display: flex; gap: 4px; margin-left: auto; background: var(--co-bg, #f5f6f8); border-radius: 10px; padding: 3px; }
+  .ad-period-btn { border: none; background: transparent; font-size: 11.5px; font-weight: 600; color: var(--co-text-secondary, #6b7280); padding: 5px 10px; border-radius: 8px; cursor: pointer; }
+  .ad-period-btn.active { background: #fff; color: var(--co-accent-dark, #048a44); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+
+  .ad-stat-row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
   .ad-stat { min-width: 110px; }
-  .ad-stat-num { font-size: 26px; font-weight: 800; color: var(--co-accent-dark, #048a44); line-height: 1.2; }
+  .ad-stat-num { font-size: 26px; font-weight: 800; color: var(--co-accent-dark, #048a44); line-height: 1.2; display: flex; align-items: center; gap: 6px; }
   .ad-stat-label { font-size: 11.5px; color: var(--co-text-secondary, #6b7280); margin-top: 2px; }
+
+  .ad-trend { font-size: 12px; font-weight: 700; border-radius: 10px; padding: 1px 7px; }
+  .ad-trend.up   { color: #048a44; background: #e6f9ef; }
+  .ad-trend.down { color: #dc2626; background: #fee2e2; }
+  .ad-trend.flat { color: var(--co-text-light, #adb5bd); background: var(--co-bg, #f5f6f8); }
+
+  .ad-search {
+    font-size: 12.5px; border: 1.5px solid var(--co-border, #e9ecef); border-radius: 14px;
+    padding: 6px 12px; width: 180px; outline: none; background: var(--co-bg, #f5f6f8);
+  }
+  .ad-search:focus { border-color: var(--co-accent, #06b35a); }
+
+  .ad-table th.sortable { cursor: pointer; user-select: none; }
+  .ad-table th.sortable:hover { color: var(--co-text-primary, #111827); }
+  .ad-table th .ad-sort-arrow { font-size: 9px; margin-left: 2px; opacity: 0.6; }
+  .ad-table tr.ad-room-row { cursor: pointer; }
+  .ad-table tr.ad-room-row:hover td { background: var(--co-hover, #f3f4f6); }
+
+  .ad-rank-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 50%; font-size: 10.5px; font-weight: 700;
+    background: var(--co-bg, #f5f6f8); color: var(--co-text-secondary, #6b7280); margin-right: 6px;
+  }
+  .ad-rank-badge.top1 { background: #fde68a; color: #92400e; }
+  .ad-rank-badge.top2 { background: #e5e7eb; color: #374151; }
+  .ad-rank-badge.top3 { background: #fdba74; color: #7c2d12; }
+
+  .ad-member-list { list-style: none; margin: 0; padding: 0; }
+  .ad-member-list li {
+    padding: 9px 2px; border-bottom: 1px solid var(--co-border, #e9ecef); font-size: 13.5px;
+    color: var(--co-text-primary, #111827);
+  }
+  .ad-member-list li:last-child { border-bottom: none; }
+
+  /* admin.htmlには.co-widget相当の位置基準コンテナがないため、モーダルを画面全体に固定する */
+  #ad-member-modal.modal-overlay { position: fixed; }
 
   .ad-chart { display: flex; align-items: flex-end; gap: 2px; height: 90px; margin-top: 14px; overflow-x: auto; padding-bottom: 2px; }
   .ad-bar-wrap { flex-shrink: 0; width: 10px; height: 100%; display: flex; align-items: flex-end; position: relative; }
@@ -125,9 +165,16 @@
         <div id="ad-content" class="hidden">
 
           <div class="ad-card">
-            <div class="ad-card-title">利用状況</div>
+            <div class="ad-card-title">
+              利用状況
+              <div class="ad-period-toggle" id="ad-period-toggle">
+                <button class="ad-period-btn" data-days="7">7日</button>
+                <button class="ad-period-btn active" data-days="30">30日</button>
+                <button class="ad-period-btn" data-days="90">90日</button>
+              </div>
+            </div>
             <div class="ad-stat-row">
-              <div class="ad-stat"><div class="ad-stat-num" id="ad-stat-today">–</div><div class="ad-stat-label">本日のアクティブ利用者</div></div>
+              <div class="ad-stat"><div class="ad-stat-num"><span id="ad-stat-today">–</span><span id="ad-stat-trend"></span></div><div class="ad-stat-label">本日のアクティブ利用者<br>（カッコ内は前週比）</div></div>
               <div class="ad-stat"><div class="ad-stat-num" id="ad-stat-total-users">–</div><div class="ad-stat-label">登録ユーザー数</div></div>
               <div class="ad-stat"><div class="ad-stat-num" id="ad-stat-rooms">–</div><div class="ad-stat-label">トーク数</div></div>
             </div>
@@ -135,28 +182,57 @@
           </div>
 
           <div class="ad-card">
-            <div class="ad-card-title">
-              トーク一覧
-              <span class="ad-badge" id="ad-rooms-count"></span>
-              <button class="ad-csv-btn" id="ad-csv-btn">CSVダウンロード</button>
-            </div>
-            <div style="max-height:360px;overflow-y:auto;">
-              <table class="ad-table" id="ad-rooms-table">
-                <thead>
-                  <tr><th>トーク名</th><th class="num">参加者</th><th class="num">メッセージ数</th><th>最終更新</th></tr>
-                </thead>
-                <tbody id="ad-rooms-tbody"></tbody>
+            <div class="ad-card-title">利用者ランキング（通算メッセージ数）</div>
+            <div style="max-height:260px;overflow-y:auto;">
+              <table class="ad-table" id="ad-ranking-table">
+                <thead><tr><th>利用者</th><th class="num">メッセージ数</th></tr></thead>
+                <tbody id="ad-ranking-tbody"></tbody>
               </table>
             </div>
           </div>
 
           <div class="ad-card">
-            <div class="ad-card-title">Firebase 使用量（Realtime Database 転送量・直近30日）</div>
+            <div class="ad-card-title">
+              トーク一覧
+              <span class="ad-badge" id="ad-rooms-count"></span>
+              <input class="ad-search" id="ad-room-search" type="search" placeholder="トーク名で検索…" style="margin-left:auto;">
+              <button class="ad-csv-btn" id="ad-csv-btn">CSVダウンロード</button>
+            </div>
+            <div style="max-height:360px;overflow-y:auto;">
+              <table class="ad-table" id="ad-rooms-table">
+                <thead>
+                  <tr>
+                    <th class="sortable" data-key="name">トーク名<span class="ad-sort-arrow"></span></th>
+                    <th class="sortable num" data-key="memberCount">参加者<span class="ad-sort-arrow"></span></th>
+                    <th class="sortable num" data-key="messageCount">メッセージ数<span class="ad-sort-arrow"></span></th>
+                    <th class="sortable" data-key="lastSentAt">最終更新<span class="ad-sort-arrow"></span></th>
+                  </tr>
+                </thead>
+                <tbody id="ad-rooms-tbody"></tbody>
+              </table>
+            </div>
+            <div class="ad-empty" style="margin-top:6px;">行をクリックするとメンバー一覧を表示します</div>
+          </div>
+
+          <div class="ad-card">
+            <div class="ad-card-title">Firebase 使用量（Realtime Database 転送量）</div>
             <div id="ad-usage-body">
               <div class="ad-empty">読み込み中…</div>
             </div>
           </div>
 
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="ad-member-modal">
+      <div class="modal" style="max-width:340px;">
+        <div class="modal-header">
+          <span class="modal-title" id="ad-member-modal-title">メンバー</span>
+          <button class="modal-close" id="ad-member-modal-close">✕</button>
+        </div>
+        <div class="modal-body">
+          <ul class="ad-member-list" id="ad-member-modal-list"></ul>
         </div>
       </div>
     </div>
@@ -253,6 +329,60 @@ el('ad-logout-btn').addEventListener('click', async () => {
 
 /* ---- ダッシュボード ---- */
 let lastRooms = [];
+let currentDays = 30;
+let roomSort = { key: 'lastSentAt', dir: 'desc' };
+
+const renderTrend = (trend) => {
+  const elTrend = el('ad-stat-trend');
+  if (!trend) { elTrend.innerHTML = ''; return; }
+  const pct = trend.changePct;
+  const cls = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+  const arrow = pct > 0 ? '▲' : pct < 0 ? '▼' : '-';
+  elTrend.innerHTML = `<span class="ad-trend ${cls}">${arrow} ${Math.abs(pct)}%</span>`;
+};
+
+const renderRanking = (ranking) => {
+  const tbody = el('ad-ranking-tbody');
+  if (!ranking?.length) {
+    tbody.innerHTML = '<tr><td colspan="2" class="ad-empty">データがありません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = ranking.map((u, i) => {
+    const rankCls = i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : '';
+    return `
+    <tr>
+      <td><span class="ad-rank-badge ${rankCls}">${i + 1}</span>${escapeHTML(u.name)}</td>
+      <td class="num">${u.messageCount}</td>
+    </tr>`;
+  }).join('');
+};
+
+const openMemberModal = (room) => {
+  el('ad-member-modal-title').textContent = `${room.name}${room.isDm ? '' : ' のメンバー'}`;
+  el('ad-member-modal-list').innerHTML = (room.members || [])
+    .map(name => `<li>${escapeHTML(name)}</li>`).join('') || '<li class="ad-empty">メンバー情報がありません</li>';
+  show('ad-member-modal', true);
+};
+el('ad-member-modal-close').addEventListener('click', () => show('ad-member-modal', false));
+el('ad-member-modal').addEventListener('click', e => { if (e.target.id === 'ad-member-modal') show('ad-member-modal', false); });
+
+el('ad-period-toggle').addEventListener('click', e => {
+  const btn = e.target.closest('.ad-period-btn');
+  if (!btn) return;
+  currentDays = Number(btn.dataset.days);
+  el('ad-period-toggle').querySelectorAll('.ad-period-btn').forEach(b => b.classList.toggle('active', b === btn));
+  loadStats();
+});
+
+el('ad-rooms-table').querySelector('thead').addEventListener('click', e => {
+  const th = e.target.closest('th.sortable');
+  if (!th) return;
+  const key = th.dataset.key;
+  roomSort = { key, dir: roomSort.key === key && roomSort.dir === 'desc' ? 'asc' : 'desc' };
+  renderRooms(lastRooms);
+});
+
+el('ad-room-search').addEventListener('input', () => renderRooms(lastRooms));
 
 const renderActiveChart = (dailyActive) => {
   const chart = el('ad-active-chart');
@@ -306,19 +436,38 @@ const renderUsageChart = (usage) => {
 };
 
 const renderRooms = (rooms) => {
-  el('ad-rooms-count').textContent = `${rooms.length}件`;
+  const query = el('ad-room-search').value.trim().toLowerCase();
+  let filtered = query ? rooms.filter(r => r.name.toLowerCase().includes(query)) : rooms.slice();
+
+  const { key, dir } = roomSort;
+  filtered.sort((a, b) => {
+    const av = a[key] ?? (typeof a[key] === 'number' ? 0 : '');
+    const bv = b[key] ?? (typeof b[key] === 'number' ? 0 : '');
+    const cmp = typeof av === 'string' ? av.localeCompare(bv, 'ja') : av - bv;
+    return dir === 'asc' ? cmp : -cmp;
+  });
+
+  el('ad-rooms-table').querySelectorAll('th.sortable').forEach(th => {
+    th.querySelector('.ad-sort-arrow').textContent = th.dataset.key === key ? (dir === 'asc' ? '▲' : '▼') : '';
+  });
+
+  el('ad-rooms-count').textContent = query ? `${filtered.length} / ${rooms.length}件` : `${rooms.length}件`;
   const tbody = el('ad-rooms-tbody');
-  if (!rooms.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="ad-empty">トークがありません</td></tr>';
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="ad-empty">${rooms.length ? '該当するトークがありません' : 'トークがありません'}</td></tr>`;
     return;
   }
-  tbody.innerHTML = rooms.map(r => `
-    <tr>
+  tbody.innerHTML = filtered.map((r, i) => `
+    <tr class="ad-room-row" data-idx="${rooms.indexOf(r)}">
       <td>${escapeHTML(r.name)}${r.isDm ? ' <span class="ad-badge">DM</span>' : ''}</td>
       <td class="num">${r.memberCount}</td>
       <td class="num">${r.messageCount}</td>
       <td>${fmtDateTime(r.lastSentAt)}</td>
     </tr>`).join('');
+
+  tbody.querySelectorAll('tr.ad-room-row').forEach(tr => {
+    tr.addEventListener('click', () => openMemberModal(rooms[Number(tr.dataset.idx)]));
+  });
 };
 
 const downloadCSV = () => {
@@ -341,11 +490,11 @@ const downloadCSV = () => {
 el('ad-csv-btn').addEventListener('click', downloadCSV);
 
 const loadStats = async () => {
-  show('ad-loading', true);
-  show('ad-content', false);
+  const firstLoad = el('ad-content').classList.contains('hidden');
+  show('ad-loading', firstLoad);
   try {
     const idToken = await firebase.auth().currentUser.getIdToken();
-    const res = await fetch(CONFIG.PROXY_ENDPOINTS.adminStats, {
+    const res = await fetch(`${CONFIG.PROXY_ENDPOINTS.adminStats}?days=${currentDays}`, {
       headers: { Authorization: `Bearer ${idToken}` },
     });
     const data = await res.json();
@@ -357,8 +506,10 @@ const loadStats = async () => {
     el('ad-stat-rooms').textContent = data.roomCount ?? '–';
     const today = (data.dailyActive || []).slice(-1)[0];
     el('ad-stat-today').textContent = today ? today.activeUsers : '0';
+    renderTrend(data.activeTrend);
 
     renderActiveChart(data.dailyActive || []);
+    renderRanking(data.userRanking || []);
     renderRooms(lastRooms);
     renderUsageChart(data.usage);
 
@@ -366,6 +517,7 @@ const loadStats = async () => {
     show('ad-content', true);
   } catch (e) {
     el('ad-loading').innerHTML = `<div class="ad-error">${escapeHTML(e.message || '読み込みに失敗しました')}</div>`;
+    show('ad-loading', true);
   }
 };
 
